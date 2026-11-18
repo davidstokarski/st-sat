@@ -7,7 +7,7 @@ Built on [st-shell](https://github.com/davidstokarski/st-shell).
 
 ## Features
 - Up to 6 bands, phase-coherent Linkwitz–Riley crossovers (12/24/48 dB/oct), draggable in the display
-- 26 saturation styles across Tube, Tape, Saturation, Amp, Clip and FX categories
+- 27 saturation styles across Tube, Tape, Saturation, Amp, Clip and FX categories
 - Per band: Drive, Dynamics (upward + downward compression / expansion with full threshold, ratio, attack,
   release and pre/post control), Tone tilt, resonant Feedback + frequency, Mix, Level, Pan,
   Stereo/Mid/Side/Left/Right processing, solo / mute / bypass
