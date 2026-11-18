@@ -34,6 +34,7 @@ StSatProcessor::StSatProcessor()
         auto& r = bandRefs[(size_t) b];
         auto id = [b] (const char* s) { return ids::band (b, s); };
         bind (r.style, id ("style"));             bind (r.drive, id ("drive"));
+        bind (r.driveSpread, id ("drive_spread"));
         bind (r.dyn, id ("dyn"));                 bind (r.upT, id ("dyn_up_thresh"));
         bind (r.upR, id ("dyn_up_ratio"));        bind (r.downT, id ("dyn_down_thresh"));
         bind (r.downR, id ("dyn_down_ratio"));    bind (r.attack, id ("dyn_attack"));
@@ -131,6 +132,7 @@ void StSatProcessor::updateEngineSettings() noexcept
         BandSettings s;
         s.style = r.style.getInt();
         s.driveDb = value (r.drive);
+        s.driveSpreadDb = value (r.driveSpread);
         s.dynamics = value (r.dyn) * 0.01f;
         s.upThresholdDb = value (r.upT);
         s.upRatio = value (r.upR);

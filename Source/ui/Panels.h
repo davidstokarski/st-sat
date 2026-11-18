@@ -50,7 +50,6 @@ private:
     st::IconButton closeButton { st::icons::Icon::close, "Remove band" };
     std::unique_ptr<st::Knob> mix, feedback, fbFreq, dynamics, drive, level;
     std::array<std::unique_ptr<st::Fader>, 4> tone;
-    std::unique_ptr<PanStrip> pan;
     st::FlatButton dynDetail { "", "Upward / downward dynamics detail" };
 
     juce::Rectangle<float> box;

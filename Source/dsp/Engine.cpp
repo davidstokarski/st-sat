@@ -22,8 +22,10 @@ void BandProcessor::prepare (double rate, int maxBlock, int channels, int factor
     dynamics.prepare (fs, maxBlock, numCh);
     dry.setSize (numCh, maxBlock, false, false, true);
 
-    for (auto* s : { &feedbackGain, &wet, &gainL, &gainR, &bypassMix, &audibleGain })
+    for (auto* s : { &feedbackGain, &wet, &gainL, &gainR, &bypassMix, &audibleGain, &spreadL, &spreadR })
         s->prepare (fs, 25.0);
+    spreadL.setCurrentAndTarget (1.0f);
+    spreadR.setCurrentAndTarget (1.0f);
 
     feedbackGain.setCurrentAndTarget (0.0f);
     wet.setCurrentAndTarget (settings.mix);
@@ -63,6 +65,8 @@ void BandProcessor::setSettings (const BandSettings& s) noexcept
 
     // Feedback: perceptually scaled, stays below self-oscillation runaway (the saturator bounds it anyway).
     feedbackGain.setTarget (0.92f * std::pow (s.feedback, 0.7f));
+    spreadL.setTarget (juce::Decibels::decibelsToGain (-0.5f * s.driveSpreadDb));
+    spreadR.setTarget (juce::Decibels::decibelsToGain (0.5f * s.driveSpreadDb));
     wet.setTarget (s.mix);
     bypassMix.setTarget (s.bypass ? 0.0f : 1.0f);
     audibleGain.setTarget (s.audible);
@@ -123,14 +127,24 @@ void BandProcessor::processActiveChannels (juce::AudioBuffer<float>& band, int n
         dynamics.process (view, n);
 
     // Saturation with resonant feedback loop (per frame).
+    // Stereo drive spread: extra pre-gain per channel (only when both channels are processed);
+    // undone after the saturator when auto gain is on, so it reads as "more/less drive", not level.
+    const bool spread = numActive == 2;
+    const bool undoSpread = settings.autoGain;
+
     float frame[2];
     for (int i = 0; i < n; ++i)
     {
         const float fbg = feedbackGain.getNext();
+        const float sg[2] = { spreadL.getNext(), spreadR.getNext() };
         for (int c = 0; c < numActive; ++c)
-            frame[c] = ch[c][i] + fbg * feedbackState[(size_t) c];
+            frame[c] = (ch[c][i] + fbg * feedbackState[(size_t) c]) * (spread ? sg[c] : 1.0f);
 
         saturator.processFrame (frame, numActive);
+
+        if (spread && undoSpread)
+            for (int c = 0; c < numActive; ++c)
+                frame[c] /= sg[c];
 
         for (int c = 0; c < numActive; ++c)
         {

@@ -8,16 +8,19 @@ namespace
     st::SpectrumAnalyzer::Options analyzerOptions()
     {
         st::SpectrumAnalyzer::Options o;
-        o.fftOrder = 13;
+        o.fftOrder = 12;            // 4096: shorter window = quicker, livelier response
+        o.hopSize = 128;            // a fresh FFT nearly every display frame
         o.numDisplayPoints = 340;
         o.minHz = 15.0f;
         o.maxHz = 24000.0f;
-        o.releaseDbPerSec = 28.0f;
-        o.smoothingPasses = 2;
+        o.attack = 0.55f;
+        o.releaseDbPerSec = 34.0f;
+        o.smoothingPasses = 3;
         return o;
     }
 
     constexpr float specMinDb = -84.0f, specMaxDb = 0.0f;
+    constexpr float kLevelMin = -36.0f, kLevelMax = 24.0f;
 }
 
 MultibandDisplay::MultibandDisplay (StSatProcessor& p)
@@ -52,16 +55,17 @@ float MultibandDisplay::hzForX (float x) const noexcept
     return minHz * std::pow (maxHz / minHz, t);
 }
 
+// Band handles show / set the band's output Level: +24 dB at the top of travel, -36 dB at the bottom.
 float MultibandDisplay::yForDrive (float db) const noexcept
 {
-    const float t = std::sqrt (juce::jlimit (0.0f, 1.0f, db / 48.0f));
+    const float t = juce::jlimit (0.0f, 1.0f, (db - kLevelMin) / (kLevelMax - kLevelMin));
     return handleBottom + (handleTop - handleBottom) * t;
 }
 
 float MultibandDisplay::driveForY (float y) const noexcept
 {
     const float t = juce::jlimit (0.0f, 1.0f, (handleBottom - y) / juce::jmax (1.0f, handleBottom - handleTop));
-    return 48.0f * t * t;
+    return kLevelMin + (kLevelMax - kLevelMin) * t;
 }
 
 float MultibandDisplay::crossover (int i) const
@@ -127,7 +131,7 @@ void MultibandDisplay::resized()
 {
     plot = getLocalBounds().toFloat();
     for (int b = 0; b < kMaxBands; ++b)
-        handleY[(size_t) b].snap (yForDrive (proc.apvts.getRawParameterValue (ids::band (b, "drive"))->load()));
+        handleY[(size_t) b].snap (yForDrive (proc.apvts.getRawParameterValue (ids::band (b, "level"))->load()));
 }
 
 void MultibandDisplay::frame (double dt)
@@ -141,7 +145,7 @@ void MultibandDisplay::frame (double dt)
     for (int b = 0; b < kMaxBands; ++b)
     {
         const auto i = (size_t) b;
-        handleY[i].setTarget (yForDrive (proc.apvts.getRawParameterValue (ids::band (b, "drive"))->load()));
+        handleY[i].setTarget (yForDrive (proc.apvts.getRawParameterValue (ids::band (b, "level"))->load()));
         handleY[i].tick (dt, drag.index == b && drag.target == Target::handle ? 60.0f : 18.0f);
 
         const bool hov = hover.index == b && (hover.target == Target::handle || hover.target == Target::bandBody);
@@ -223,7 +227,7 @@ void MultibandDisplay::drawSpectrum (juce::Graphics& g)
 {
     if (analyzerMode == AnalyzerMode::off) return;
     const auto& t = st::Theme::get();
-    auto area = plot.withTrimmedTop (60.0f).withBottom (handleBottom + 40.0f);
+    auto area = plot.withTrimmedTop (48.0f).withBottom (handleBottom + 40.0f);
 
     if (analyzerMode == AnalyzerMode::preAndPost)
     {
@@ -255,7 +259,7 @@ void MultibandDisplay::drawCrossovers (juce::Graphics& g)
 
         // dashed divider
         juce::Path line;
-        line.startNewSubPath (x, plot.getY() + 58.0f);
+        line.startNewSubPath (x, plot.getY() + 46.0f);
         line.lineTo (x, handleBottom + 18.0f);
         juce::Path dashed;
         const float dashes[] = { 4.0f, 4.0f };
@@ -332,7 +336,7 @@ void MultibandDisplay::drawHandles (juce::Graphics& g)
         if (captionAlpha > 0.02f)
         {
             const int style = (int) proc.apvts.getRawParameterValue (ids::band (b, "style"))->load();
-            const auto txt = showValue ? "Drive " + proc.bandParam (b, "drive").getCurrentValueAsText()
+            const auto txt = showValue ? "Level " + proc.bandParam (b, "level").getCurrentValueAsText()
                                        : juce::String (getStyleInfo (style).name);
             g.setFont (st::fonts::medium (11.0f));
             g.setColour (t.text.withAlpha (0.75f * captionAlpha));
@@ -367,7 +371,7 @@ void MultibandDisplay::drawModDots (juce::Graphics& g)
         for (int k = 0; k < sources.size(); ++k)
         {
             const auto c = proc.modMatrix.getSourceColour (sources[k]);
-            const juce::Point<float> p (x0 + (float) k * 10.0f, plot.getY() + 76.0f);
+            const juce::Point<float> p (x0 + (float) k * 10.0f, plot.getY() + 62.0f);
             g.setColour (c.withAlpha (0.25f));
             g.fillEllipse (juce::Rectangle<float> (13.0f, 13.0f).withCentre (p));
             g.setColour (c);
@@ -414,8 +418,8 @@ void MultibandDisplay::mouseDown (const juce::MouseEvent& e)
 
     if (e.mods.isPopupMenu()) { drag = {}; return; }
 
-    proc.undoManager.beginNewTransaction ("Drive");
-    dragParam = &proc.bandParam (drag.index, "drive");
+    proc.undoManager.beginNewTransaction ("Band level");
+    dragParam = &proc.bandParam (drag.index, "level");
     dragStartValue = dragParam->convertFrom0to1 (dragParam->getValue());
     dragParam->beginChangeGesture();
 }
@@ -438,9 +442,9 @@ void MultibandDisplay::mouseDrag (const juce::MouseEvent& e)
         db = driveForY (startY + (e.position.y - dragStart.y) * scale);
     }
     else
-        db = dragStartValue + (dragStart.y - e.position.y) * (e.mods.isShiftDown() ? 0.04f : 0.18f);
+        db = dragStartValue + (dragStart.y - e.position.y) * (e.mods.isShiftDown() ? 0.04f : 0.2f);
 
-    dragParam->setValueNotifyingHost (dragParam->convertTo0to1 (juce::jlimit (0.0f, 48.0f, db)));
+    dragParam->setValueNotifyingHost (dragParam->convertTo0to1 (juce::jlimit (kLevelMin, kLevelMax, db)));
 }
 
 void MultibandDisplay::mouseUp (const juce::MouseEvent&)
@@ -456,7 +460,7 @@ void MultibandDisplay::mouseDoubleClick (const juce::MouseEvent& e)
 
     if (h.target == Target::handle)
     {
-        auto& p = proc.bandParam (h.index, "drive");
+        auto& p = proc.bandParam (h.index, "level");
         p.beginChangeGesture();
         p.setValueNotifyingHost (p.getDefaultValue());
         p.endChangeGesture();
@@ -478,11 +482,11 @@ void MultibandDisplay::mouseWheelMove (const juce::MouseEvent& e, const juce::Mo
     const auto h = hitTestAt (e.position);
     if (h.target != Target::bandBody && h.target != Target::handle) return;
 
-    auto& p = proc.bandParam (h.index, "drive");
+    auto& p = proc.bandParam (h.index, "level");
     const float dy = std::abs (w.deltaY) > std::abs (w.deltaX) ? w.deltaY : -w.deltaX;
-    const float db = p.convertFrom0to1 (p.getValue()) + dy * (e.mods.isShiftDown() ? 1.0f : 4.0f) * (w.isReversed ? -1.0f : 1.0f);
+    const float db = p.convertFrom0to1 (p.getValue()) + dy * (e.mods.isShiftDown() ? 0.5f : 3.0f) * (w.isReversed ? -1.0f : 1.0f);
     p.beginChangeGesture();
-    p.setValueNotifyingHost (p.convertTo0to1 (juce::jlimit (0.0f, 48.0f, db)));
+    p.setValueNotifyingHost (p.convertTo0to1 (juce::jlimit (kLevelMin, kLevelMax, db)));
     p.endChangeGesture();
 }
 

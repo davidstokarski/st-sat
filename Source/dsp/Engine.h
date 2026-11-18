@@ -10,6 +10,7 @@ struct BandSettings
 {
     int style = 0;
     float driveDb = 0.0f;
+    float driveSpreadDb = 0.0f;     // + = more drive on the right (or side) channel
     float dynamics = 0.0f;          // -1..+1
     float upThresholdDb = -36.0f, upRatio = 3.0f;
     float downThresholdDb = -18.0f, downRatio = 4.0f;
@@ -60,7 +61,7 @@ private:
     st::dsp::UpDownCompressor dynamics;
     juce::AudioBuffer<float> dry;
 
-    st::dsp::LinearSmoother feedbackGain, wet, gainL, gainR, bypassMix, audibleGain;
+    st::dsp::LinearSmoother feedbackGain, wet, gainL, gainR, bypassMix, audibleGain, spreadL, spreadR;
     std::array<float, 2> feedbackState {};
     ChannelMode lastChannelMode = ChannelMode::stereo;
     float levelFollower = 0.0f, levelCoeff = 0.999f;

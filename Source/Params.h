@@ -25,7 +25,7 @@ namespace ids
 
     // Per-band parameter suffixes. Full ID: "b<n>_<suffix>", n = 1..6
     inline const juce::StringArray bandSuffixes {
-        "style", "drive", "dyn", "dyn_up_thresh", "dyn_up_ratio", "dyn_down_thresh", "dyn_down_ratio",
+        "style", "drive", "drive_spread", "dyn", "dyn_up_thresh", "dyn_up_ratio", "dyn_down_thresh", "dyn_down_ratio",
         "dyn_attack", "dyn_release", "dyn_pos", "tone_low", "tone_lmid", "tone_hmid", "tone_high", "fb", "fb_freq", "mix", "level", "pan",
         "chan", "mute", "solo", "bypass"
     };

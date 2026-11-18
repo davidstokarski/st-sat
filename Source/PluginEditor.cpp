@@ -15,7 +15,7 @@ StSatEditor::StSatEditor (StSatProcessor& p)
     content.addAndMakeVisible (footer);
     header.toFront (false);
 
-    display.setHandleRange (118.0f, (float) panelY - 22.0f);
+    display.setHandleRange (104.0f, (float) panelY - 24.0f);
     display.onBandSelected = [this] (int b) { selectBand (b); };
     display.onFrame = [this] (double dt) { animate (dt); };
 

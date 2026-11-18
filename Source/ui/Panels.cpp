@@ -141,8 +141,10 @@ FloatingBandPanel::FloatingBandPanel (StSatProcessor& p, int b) : proc (p), band
         addAndMakeVisible (*tone[(size_t) i]);
     }
 
-    pan = std::make_unique<PanStrip> (P ("pan"), um);
-    addAndMakeVisible (*pan);
+    drive->setRimParameter (&P ("drive_spread"), "Spread");
+    drive->setTooltip ("Drive. Drag the red ring to spread the drive between left and right.");
+    level->setRimParameter (&P ("pan"), "Pan");
+    level->setTooltip ("Band level. Drag the red ring to pan the band.");
 
     dynDetail.setButtonText (juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2")));
     dynDetail.setFontHeight (11.0f);
@@ -180,8 +182,7 @@ void FloatingBandPanel::resized()
     for (int i = 0; i < 4; ++i)
         tone[(size_t) i]->setBounds (toneArea.getX() + i * 26, toneArea.getY(), 26, 82);
 
-    level->setBounds (536, 22, 86, 100);
-    pan->setBounds (level->getX() + 8, level->getBottom() - 34, level->getWidth() - 16, 12);
+    level->setBounds (532, 18, 94, 106);
 }
 
 void FloatingBandPanel::paint (juce::Graphics& g)
@@ -382,8 +383,7 @@ FooterBar::FooterBar (StSatProcessor& p)
         m.addItem (1, "Off", true, analyzerMode == 0);
         m.addItem (2, "Post", true, analyzerMode == 1);
         m.addItem (3, "Pre + Post", true, analyzerMode == 2);
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&analyzer),
-                         [safe = juce::Component::SafePointer<FooterBar> (this)] (int r) { if (safe != nullptr && r > 0) safe->setAnalyzerMode (r - 1); });
+        st::showMenu (m, &analyzer, [safe = juce::Component::SafePointer<FooterBar> (this)] (int r) { if (safe != nullptr && r > 0) safe->setAnalyzerMode (r - 1); });
     };
 
     for (juce::Component* c : { (juce::Component*) &quality, (juce::Component*) &slope, (juce::Component*) &autoGain, (juce::Component*) &analyzer,

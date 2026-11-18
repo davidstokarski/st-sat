@@ -65,6 +65,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout (const
 
         group->addChild (makeChoice (id ("style"), n + "Style", styles, defStyle));
         group->addChild (makeFloat (id ("drive"), n + "Drive", skewed (0.0f, 48.0f, 12.0f, 0.01f), defaults::drive, dbAttributes()));
+        group->addChild (makeFloat (id ("drive_spread"), n + "Stereo Drive Spread", linear (-24.0f, 24.0f, 0.01f), 0.0f,
+                                    juce::AudioParameterFloatAttributes()
+                                        .withStringFromValueFunction ([] (float v, int)
+                                        {
+                                            if (std::abs (v) < 0.05f) return juce::String ("Centre");
+                                            return juce::String (std::abs (v), 1) + " dB " + (v < 0.0f ? "L" : "R");
+                                        })
+                                        .withValueFromStringFunction ([] (const juce::String& s) { return s.retainCharacters ("-+.0123456789").getFloatValue(); })));
         group->addChild (makeFloat (id ("dyn"), n + "Dynamics", linear (-100.0f, 100.0f, 0.01f), 0.0f, percentAttributes (true)));
         group->addChild (makeFloat (id ("dyn_up_thresh"), n + "Upward Threshold", linear (-72.0f, 0.0f, 0.01f), -36.0f, dbAttributes()));
         group->addChild (makeFloat (id ("dyn_up_ratio"), n + "Upward Ratio", skewed (1.0f, 20.0f, 3.0f, 0.01f), 3.0f, ratioAttributes()));
@@ -103,7 +111,7 @@ juce::StringArray getModulatableParameterIds()
         out.add (ids::crossover (i));
 
     for (int b = 0; b < kMaxBands; ++b)
-        for (auto s : { "drive", "dyn", "dyn_up_thresh", "dyn_up_ratio", "dyn_down_thresh", "dyn_down_ratio",
+        for (auto s : { "drive", "drive_spread", "dyn", "dyn_up_thresh", "dyn_up_ratio", "dyn_down_thresh", "dyn_down_ratio",
                         "dyn_attack", "dyn_release", "tone_low", "tone_lmid", "tone_hmid", "tone_high", "fb", "fb_freq", "mix", "level", "pan" })
             out.add (ids::band (b, s));
 

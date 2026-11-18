@@ -45,7 +45,7 @@ private:
 
     struct BandRefs
     {
-        MRef style, drive, dyn, upT, upR, downT, downR, attack, release, dynPos,
+        MRef style, drive, driveSpread, dyn, upT, upR, downT, downR, attack, release, dynPos,
              toneLow, toneLmid, toneHmid, toneHigh, fb, fbFreq, mix, level, pan, chan, mute, solo, bypass;
     };
     std::array<BandRefs, stsat::kMaxBands> bandRefs;
