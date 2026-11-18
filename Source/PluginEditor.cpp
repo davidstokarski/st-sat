@@ -6,63 +6,43 @@ StSatEditor::StSatEditor (StSatProcessor& p)
     : EditorBase (p, designWidth, designHeight),
       proc (p),
       display (p),
-      masterPanel (p),
       modPanel (p.modMatrix),
-      quality (p.param (ids::quality), &p.undoManager, { "1x", "2x", "4x", "8x" }),
-      slope (p.param (ids::slope), &p.undoManager, { "12", "24", "48" }),
-      autoGain (p.param (ids::autoGain), &p.undoManager, "AUTO GAIN")
+      footer (p)
 {
     header.setProductName ("Sat");
 
     auto& content = getContent();
     content.addAndMakeVisible (display);
-    content.addAndMakeVisible (masterPanel);
     content.addAndMakeVisible (modPanel);
-
-    for (auto* l : { &qualityLabel, &slopeLabel, &analyzerLabel })
-    {
-        l->setFont (st::fonts::caption (9.5f));
-        l->setColour (juce::Label::textColourId, st::Theme::get().textFaint);
-        l->setJustificationType (juce::Justification::centredRight);
-        content.addAndMakeVisible (*l);
-    }
-    qualityLabel.setText ("OVERSAMPLING", juce::dontSendNotification);
-    slopeLabel.setText ("SLOPE dB/OCT", juce::dontSendNotification);
-    analyzerLabel.setText ("ANALYZER", juce::dontSendNotification);
-
-    quality.setTooltip ("Oversampling. Higher settings reduce aliasing at the cost of CPU and a little latency.");
-    slope.setTooltip ("Crossover steepness between bands.");
-    autoGain.setTooltip ("Keeps loudness roughly constant as you change Drive.");
-    content.addAndMakeVisible (quality);
-    content.addAndMakeVisible (slope);
-    content.addAndMakeVisible (autoGain);
-
-    for (auto* b : { &analyzerOff, &analyzerPost, &analyzerBoth })
-    {
-        b->setClickingTogglesState (false);
-        content.addAndMakeVisible (*b);
-    }
-    analyzerOff.onClick  = [this] { setAnalyzerMode (0); };
-    analyzerPost.onClick = [this] { setAnalyzerMode (1); };
-    analyzerBoth.onClick = [this] { setAnalyzerMode (2); };
+    content.addAndMakeVisible (footer);
+    modPanel.setBorderless (true);
 
     display.onBandSelected = [this] (int b) { selectBand (b); };
+    display.onFrame = [this] (double dt) { animate (dt); };
 
-    selectedBand = juce::jlimit (0, proc.getNumBands() - 1, (int) proc.uiState.getProperty ("selectedBand", 0));
-    setAnalyzerMode ((int) proc.uiState.getProperty ("analyzer", 1));
-    selectBand (selectedBand);
+    footer.onAnalyzerModeChanged = [this] (int m)
+    {
+        proc.uiState.setProperty ("analyzer", m, nullptr);
+        display.setAnalyzerMode ((MultibandDisplay::AnalyzerMode) juce::jlimit (0, 2, m));
+    };
+    footer.setAnalyzerMode ((int) proc.uiState.getProperty ("analyzer", 1));
+
+    expanded = (bool) proc.uiState.getProperty ("dynExpanded", false);
+    panelWidth.snap ((float) (expanded ? FloatingBandPanel::expandedWidth : FloatingBandPanel::collapsedWidth));
+    panelFade.snap (1.0f);
+
+    selectBand (juce::jlimit (0, proc.getNumBands() - 1, (int) proc.uiState.getProperty ("selectedBand", 0)), false);
 
     modBinder = std::make_unique<st::ModulationBinder> (proc.modMatrix, getContent(), &modPanel);
-    relayout();
-
     proc.param (ids::numBands).addListener (this);
+    relayout();
 }
 
 StSatEditor::~StSatEditor()
 {
-    modBinder.reset();
     proc.param (ids::numBands).removeListener (this);
     cancelPendingUpdate();
+    modBinder.reset();
 }
 
 void StSatEditor::handleAsyncUpdate()
@@ -72,81 +52,119 @@ void StSatEditor::handleAsyncUpdate()
         selectBand (nb - 1);
 }
 
-void StSatEditor::selectBand (int b)
+void StSatEditor::selectBand (int b, bool animateChange)
 {
     b = juce::jlimit (0, juce::jmax (0, proc.getNumBands() - 1), b);
-    const bool changed = bandPanel == nullptr || bandPanel->getBand() != b;
     selectedBand = b;
     proc.uiState.setProperty ("selectedBand", b, nullptr);
     display.setSelectedBand (b);
 
-    if (changed)
+    if (bandPanel != nullptr && bandPanel->getBand() == b)
+        return;
+
+    // Cross-fade: the old panel fades out in place while the new one glides to its band.
+    if (animateChange && bandPanel != nullptr)
     {
-        bandPanel = std::make_unique<BandPanel> (proc, b);
-        dynamicsPanel = std::make_unique<DynamicsPanel> (proc, b);
-        getContent().addAndMakeVisible (*bandPanel);
-        getContent().addAndMakeVisible (*dynamicsPanel);
-        getContent().resized();
-        if (modBinder != nullptr) modBinder->refresh();
+        outgoingPanel = std::move (bandPanel);
+        outgoingPanel->setInterceptsMouseClicks (false, false);
+        outgoingFade.snap (1.0f);
     }
+
+    bandPanel = std::make_unique<FloatingBandPanel> (proc, b);
+    bandPanel->setExpanded (expanded);
+    bandPanel->onExpandedChanged = [this] (bool e)
+    {
+        expanded = e;
+        proc.uiState.setProperty ("dynExpanded", e, nullptr);
+    };
+    getContent().addAndMakeVisible (*bandPanel);
+    bandPanel->setBounds (0, 0, FloatingBandPanel::expandedWidth, FloatingBandPanel::height);
+
+    if (animateChange && outgoingPanel != nullptr)
+    {
+        panelFade.snap (0.0f);
+        // Keep the new panel's start position at the old one so it slides across.
+    }
+    else
+    {
+        panelX.snap (targetPanelX());
+        panelFade.snap (1.0f);
+    }
+
+    if (modBinder != nullptr) modBinder->refresh();
+    if (! displayArea.isEmpty()) animate (0.0);
 }
 
-void StSatEditor::setAnalyzerMode (int mode)
+float StSatEditor::targetPanelX() const
 {
-    mode = juce::jlimit (0, 2, mode);
-    proc.uiState.setProperty ("analyzer", mode, nullptr);
-    display.setAnalyzerMode ((MultibandDisplay::AnalyzerMode) mode);
-    analyzerOff.setToggleState (mode == 0, juce::dontSendNotification);
-    analyzerPost.setToggleState (mode == 1, juce::dontSendNotification);
-    analyzerBoth.setToggleState (mode == 2, juce::dontSendNotification);
+    const float w = panelWidth.target;
+    const float centre = (float) displayArea.getX() + display.getBandCentreX (selectedBand);
+    const float minX = (float) displayArea.getX() + 14.0f;
+    const float maxX = (float) displayArea.getRight() - 14.0f - w;
+    return juce::jlimit (minX, juce::jmax (minX, maxX), centre - w * 0.5f);
+}
+
+void StSatEditor::placePanel (FloatingBandPanel& p, float x, float width, float fade)
+{
+    const int y = displayArea.getBottom() - FloatingBandPanel::height - 12;
+    p.setBounds (juce::roundToInt (x), y + juce::roundToInt ((1.0f - fade) * 10.0f), juce::roundToInt (width), FloatingBandPanel::height);
+    p.setAlpha (juce::jlimit (0.0f, 1.0f, fade));
+}
+
+void StSatEditor::animate (double dt)
+{
+    if (bandPanel == nullptr || displayArea.isEmpty()) return;
+
+    panelWidth.setTarget ((float) (expanded ? FloatingBandPanel::expandedWidth : FloatingBandPanel::collapsedWidth));
+    panelWidth.tick (dt, 14.0f);
+    panelX.setTarget (targetPanelX());
+    panelX.tick (dt, 12.0f);
+    panelFade.setTarget (1.0f);
+    panelFade.tick (dt, 14.0f);
+
+    placePanel (*bandPanel, panelX.current, panelWidth.current, panelFade.current);
+
+    if (outgoingPanel != nullptr)
+    {
+        outgoingFade.setTarget (0.0f);
+        if (! outgoingFade.tick (dt, 18.0f) || outgoingFade.current < 0.02f)
+            outgoingPanel.reset();
+        else
+            outgoingPanel->setAlpha (outgoingFade.current);
+    }
+
+    display.setPanelArea (bandPanel->getBounds().toFloat().translated ((float) -displayArea.getX(), (float) -displayArea.getY())
+                                                .withWidth ((float) displayArea.getWidth()).withX (0.0f));
 }
 
 void StSatEditor::layout (juce::Rectangle<int> body)
 {
-    auto r = body.reduced (14, 0).withTrimmedTop (12);
+    auto r = body;
+    footer.setBounds (r.removeFromBottom (44));
+    auto modArea = r.removeFromBottom (st::ModulationPanel::preferredHeight);
+    modPanel.setBounds (modArea.reduced (14, 0));
+    displayArea = r;
+    display.setBounds (displayArea);
 
-    footerArea = r.removeFromBottom (40);
-    r.removeFromBottom (8);
-
-    display.setBounds (r.removeFromTop (300));
-    r.removeFromTop (12);
-
-    auto row = r.removeFromTop (214);
-    masterPanel.setBounds (row.removeFromRight (168));
-    row.removeFromRight (12);
-    if (dynamicsPanel != nullptr) dynamicsPanel->setBounds (row.removeFromRight (322));
-    row.removeFromRight (12);
-    if (bandPanel != nullptr) bandPanel->setBounds (row);
-
-    r.removeFromTop (12);
-    modPanel.setBounds (r);
-
-    // Footer
-    auto f = footerArea.reduced (2, 6);
-    qualityLabel.setBounds (f.removeFromLeft (92));
-    f.removeFromLeft (8);
-    quality.setBounds (f.removeFromLeft (156));
-    f.removeFromLeft (22);
-    slopeLabel.setBounds (f.removeFromLeft (86));
-    f.removeFromLeft (8);
-    slope.setBounds (f.removeFromLeft (120));
-    f.removeFromLeft (22);
-    autoGain.setBounds (f.removeFromLeft (96));
-
-    auto right = f.removeFromRight (250);
-    analyzerBoth.setBounds (right.removeFromRight (80));
-    right.removeFromRight (4);
-    analyzerPost.setBounds (right.removeFromRight (56));
-    right.removeFromRight (4);
-    analyzerOff.setBounds (right.removeFromRight (46));
-    right.removeFromRight (8);
-    analyzerLabel.setBounds (right);
+    if (bandPanel != nullptr)
+    {
+        panelX.snap (targetPanelX());
+        placePanel (*bandPanel, panelX.current, panelWidth.current, panelFade.current);
+    }
 }
 
-void StSatEditor::paintOverlay (juce::Graphics& g, juce::Rectangle<int>)
+void StSatEditor::paintBackground (juce::Graphics& g, juce::Rectangle<int> area)
 {
-    // Hairline above the footer
-    const auto& t = st::Theme::get();
-    g.setColour (t.stroke.withAlpha (0.6f));
-    g.fillRect ((float) footerArea.getX(), (float) footerArea.getY() - 1.0f, (float) footerArea.getWidth(), 1.0f);
+    EditorBase::paintBackground (g, area);
+
+    // A soft, coloured ambient glow under the selected band (follows the panel).
+    if (bandPanel != nullptr && ! displayArea.isEmpty())
+    {
+        const auto c = st::Theme::get().seriesColour (selectedBand);
+        const float cx = panelX.current + panelWidth.current * 0.5f;
+        const float cy = (float) displayArea.getBottom();
+        juce::ColourGradient glow (c.withAlpha (0.07f), cx, cy, c.withAlpha (0.0f), cx + 420.0f, cy, true);
+        g.setGradientFill (glow);
+        g.fillRect (area.toFloat());
+    }
 }

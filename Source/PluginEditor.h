@@ -9,32 +9,31 @@ public:
     explicit StSatEditor (StSatProcessor&);
     ~StSatEditor() override;
 
-    static constexpr int designWidth = 1080, designHeight = 880;
+    static constexpr int designWidth = 1080, designHeight = 852;
 
 private:
     StSatProcessor& proc;
 
     stsat::MultibandDisplay display;
-    std::unique_ptr<stsat::BandPanel> bandPanel;
-    std::unique_ptr<stsat::DynamicsPanel> dynamicsPanel;
-    stsat::MasterPanel masterPanel;
+    std::unique_ptr<stsat::FloatingBandPanel> bandPanel, outgoingPanel;
     st::ModulationPanel modPanel;
     std::unique_ptr<st::ModulationBinder> modBinder;
+    stsat::FooterBar footer;
 
-    // Footer
-    juce::Label qualityLabel, slopeLabel, analyzerLabel;
-    st::Segmented quality, slope;
-    st::ToggleChip autoGain;
-    st::PillButton analyzerOff { "OFF" }, analyzerPost { "POST" }, analyzerBoth { "PRE+POST" };
-    juce::Rectangle<int> footerArea;
+    // Motion
+    st::Animated panelX, panelWidth, panelFade, outgoingFade;
+    bool expanded = false;
+    juce::Rectangle<int> displayArea;
 
     int selectedBand = 0;
 
     void layout (juce::Rectangle<int> body) override;
-    void paintOverlay (juce::Graphics&, juce::Rectangle<int>) override;
+    void paintBackground (juce::Graphics&, juce::Rectangle<int>) override;
 
-    void selectBand (int b);
-    void setAnalyzerMode (int mode);
+    void selectBand (int b, bool animate = true);
+    void animate (double dt);
+    float targetPanelX() const;
+    void placePanel (stsat::FloatingBandPanel&, float x, float width, float fade);
 
     void parameterValueChanged (int, float) override { triggerAsyncUpdate(); }
     void parameterGestureChanged (int, bool) override {}

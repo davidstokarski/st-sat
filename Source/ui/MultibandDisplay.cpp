@@ -9,26 +9,34 @@ namespace
     {
         st::SpectrumAnalyzer::Options o;
         o.fftOrder = 13;
-        o.numDisplayPoints = 300;
+        o.numDisplayPoints = 320;
         o.minHz = 15.0f;
         o.maxHz = 24000.0f;
-        o.releaseDbPerSec = 36.0f;
+        o.releaseDbPerSec = 30.0f;
+        o.smoothingPasses = 4;
         return o;
     }
 
-    constexpr float minDriveDb = 0.0f, maxDriveDb = 48.0f;
-    constexpr float specMinDb = -90.0f, specMaxDb = 6.0f;
+    constexpr float specMinDb = -90.0f, specMaxDb = 0.0f;
+    constexpr int hillResolution = 220;
 }
 
 MultibandDisplay::MultibandDisplay (StSatProcessor& p)
     : proc (p), preSpectrum (p.preAnalyzer, analyzerOptions()), postSpectrum (p.postAnalyzer, analyzerOptions())
 {
     setOpaque (false);
-    startTimerHz (60);
-    lastTick = juce::Time::getMillisecondCounterHiRes() * 0.001;
+
+    for (int b = 0; b < kMaxBands; ++b)
+    {
+        const float drive = proc.apvts.getRawParameterValue (ids::band (b, "drive"))->load();
+        hillHeight[(size_t) b].snap (drive);
+        presence[(size_t) b].snap (b < proc.getNumBands() ? 1.0f : 0.0f);
+    }
+
+    clock = std::make_unique<st::FrameClock> (*this, [this] (double dt) { frame (dt); });
 }
 
-MultibandDisplay::~MultibandDisplay() { stopTimer(); }
+MultibandDisplay::~MultibandDisplay() = default;
 
 void MultibandDisplay::setAnalyzerMode (AnalyzerMode m)
 {
@@ -51,16 +59,23 @@ float MultibandDisplay::hzForX (float x) const noexcept
     return minHz * std::pow (maxHz / minHz, t);
 }
 
-float MultibandDisplay::yForDrive (float db) const noexcept
+// Hill height in pixels for a drive value. Even 0 dB keeps a visible hill above the panel.
+float MultibandDisplay::heightForDrive (float db) const noexcept
 {
-    const float top = plot.getY() + 46.0f, bottom = plot.getBottom() - 18.0f;
-    return juce::jmap (juce::jlimit (minDriveDb, maxDriveDb, db), minDriveDb, maxDriveDb, bottom, top);
+    const float floorTop = panelArea.isEmpty() ? plot.getBottom() - 40.0f : panelArea.getY() - 26.0f;
+    const float minH = baseline() - floorTop;
+    const float maxH = baseline() - (plot.getY() + 64.0f);
+    const float t = std::sqrt (juce::jlimit (0.0f, 1.0f, db / 48.0f));   // more travel at low drive
+    return minH + (maxH - minH) * t;
 }
 
-float MultibandDisplay::driveForY (float y) const noexcept
+float MultibandDisplay::driveForHeight (float h) const noexcept
 {
-    const float top = plot.getY() + 46.0f, bottom = plot.getBottom() - 18.0f;
-    return juce::jmap (juce::jlimit (top, bottom, y), bottom, top, minDriveDb, maxDriveDb);
+    const float floorTop = panelArea.isEmpty() ? plot.getBottom() - 40.0f : panelArea.getY() - 26.0f;
+    const float minH = baseline() - floorTop;
+    const float maxH = baseline() - (plot.getY() + 64.0f);
+    const float t = juce::jlimit (0.0f, 1.0f, (h - minH) / juce::jmax (1.0f, maxH - minH));
+    return 48.0f * t * t;
 }
 
 float MultibandDisplay::crossover (int i) const
@@ -68,40 +83,72 @@ float MultibandDisplay::crossover (int i) const
     return proc.apvts.getRawParameterValue (ids::crossover (i))->load();
 }
 
-juce::Range<float> MultibandDisplay::bandXRange (int b) const
+float MultibandDisplay::bandMagnitude (int band, float hz) const
 {
     const int nb = numBands();
-    const float x0 = b == 0 ? plot.getX() : xForHz (crossover (b - 1));
-    const float x1 = b == nb - 1 ? plot.getRight() : xForHz (crossover (b));
-    return { x0, juce::jmax (x0 + 1.0f, x1) };
+    if (nb <= 1) return 1.0f;
+
+    const int slopeIdx = (int) proc.apvts.getRawParameterValue (ids::slope)->load();
+    const float order = slopeIdx == 0 ? 2.0f : (slopeIdx == 1 ? 4.0f : 8.0f);
+
+    auto lp = [order] (float f, float fc) { const float r = std::pow (f / fc, order); return 1.0f / (1.0f + r); };
+    auto hp = [order] (float f, float fc) { const float r = std::pow (f / fc, order); return r / (1.0f + r); };
+
+    float m = 1.0f;
+    if (band > 0)      m *= hp (hz, crossover (band - 1));
+    if (band < nb - 1) m *= lp (hz, crossover (band));
+    return m;
+}
+
+float MultibandDisplay::bandCentreHz (int b) const
+{
+    const int nb = numBands();
+    const float lo = b == 0 ? minHz * 1.6f : crossover (b - 1);
+    const float hi = b == nb - 1 ? maxHz / 1.6f : crossover (b);
+    return std::sqrt (lo * hi);
+}
+
+float MultibandDisplay::getBandCentreX (int band) const
+{
+    return xForHz (bandCentreHz (juce::jlimit (0, juce::jmax (0, numBands() - 1), band)));
 }
 
 int MultibandDisplay::bandAtX (float x) const
 {
     const int nb = numBands();
-    for (int b = 0; b < nb; ++b)
-        if (x < bandXRange (b).getEnd()) return b;
+    const float hz = hzForX (x);
+    for (int b = 0; b < nb - 1; ++b)
+        if (hz < crossover (b)) return b;
     return nb - 1;
-}
-
-juce::Rectangle<float> MultibandDisplay::pillBounds (int b) const
-{
-    const auto r = bandXRange (b);
-    const float w = juce::jlimit (28.0f, 150.0f, r.getLength() - 12.0f);
-    return { r.getStart() + (r.getLength() - w) * 0.5f, plot.getY() + 10.0f, w, 24.0f };
-}
-
-juce::Rectangle<float> MultibandDisplay::removeBounds (int b) const
-{
-    auto p = pillBounds (b);
-    return p.removeFromRight (22.0f).reduced (3.0f);
 }
 
 juce::Point<float> MultibandDisplay::driveHandle (int b) const
 {
-    const auto r = bandXRange (b);
-    const float drive = proc.apvts.getRawParameterValue (ids::band (b, "drive"))->load();
-    return { r.getStart() + r.getLength() * 0.5f, yForDrive (drive) };
+    const float x = xForHz (bandCentreHz (b));
+    const float h = heightForDrive (hillHeight[(size_t) b].current) * bandMagnitude (b, bandCentreHz (b));
+    return { x, baseline() - h };
+}
+
+juce::Rectangle<float> MultibandDisplay::labelBounds (int b) const
+{
+    const auto h = driveHandle (b);
+    return { h.x - 70.0f, h.y - 40.0f, 140.0f, 18.0f };
+}
+
+juce::Rectangle<float> MultibandDisplay::removeBounds (int b) const
+{
+    const auto lb = labelBounds (b);
+    const auto* name = getStyleInfo ((int) proc.apvts.getRawParameterValue (ids::band (b, "style"))->load()).name;
+    const float w = st::fonts::stringWidth (st::fonts::semibold (11.5f), name);
+    return juce::Rectangle<float> (16.0f, 16.0f).withCentre ({ lb.getCentreX() + w * 0.5f + 16.0f, lb.getCentreY() });
+}
+
+juce::Point<float> MultibandDisplay::crossoverHandle (int i) const
+{
+    const float f = crossover (i);
+    const float hA = heightForDrive (hillHeight[(size_t) i].current) * bandMagnitude (i, f);
+    const float hB = heightForDrive (hillHeight[(size_t) i + 1].current) * bandMagnitude (i + 1, f);
+    return { xForHz (f), baseline() - juce::jmax (hA, hB) };
 }
 
 MultibandDisplay::Hit MultibandDisplay::hitTestAt (juce::Point<float> p) const
@@ -111,15 +158,18 @@ MultibandDisplay::Hit MultibandDisplay::hitTestAt (juce::Point<float> p) const
 
     for (int b = 0; b < nb; ++b)
     {
-        if (nb > 1 && removeBounds (b).expanded (2.0f).contains (p) && pillBounds (b).getWidth() > 60.0f)
+        if (nb > 1 && (hover.index == b || selected == b) && removeBounds (b).expanded (3.0f).contains (p))
             return { Target::removeButton, b };
-        if (driveHandle (b).getDistanceFrom (p) < 11.0f)
+        if (driveHandle (b).getDistanceFrom (p) < 13.0f)
             return { Target::driveHandle, b };
     }
 
     for (int i = 0; i < nb - 1; ++i)
-        if (std::abs (xForHz (crossover (i)) - p.x) < 6.0f && p.y > plot.getY() + 38.0f)
+    {
+        const auto h = crossoverHandle (i);
+        if (std::abs (h.x - p.x) < 8.0f && p.y > h.y - 16.0f)
             return { Target::crossover, i };
+    }
 
     return { Target::bandBody, bandAtX (p.x) };
 }
@@ -127,90 +177,113 @@ MultibandDisplay::Hit MultibandDisplay::hitTestAt (juce::Point<float> p) const
 //==============================================================================
 void MultibandDisplay::resized()
 {
-    auto r = getLocalBounds().toFloat();
-    labelsRow = r.removeFromBottom (20.0f);
-    plot = r;
+    plot = getLocalBounds().toFloat();
 }
 
-void MultibandDisplay::timerCallback()
+void MultibandDisplay::frame (double dt)
 {
-    const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
-    const double dt = juce::jlimit (0.0, 0.1, now - lastTick);
-    lastTick = now;
-
     if (analyzerMode != AnalyzerMode::off)
     {
         postSpectrum.update (dt);
         if (analyzerMode == AnalyzerMode::preAndPost) preSpectrum.update (dt);
     }
 
+    const int nb = numBands();
     for (int b = 0; b < kMaxBands; ++b)
     {
-        const float lvl = proc.getEngine().getBand (b).outputLevelDb.load();
-        const float target = juce::jlimit (0.0f, 1.0f, (lvl + 48.0f) / 48.0f);
-        glow[(size_t) b] += (target - glow[(size_t) b]) * (target > glow[(size_t) b] ? 0.35f : 0.08f);
+        auto i = (size_t) b;
+        hillHeight[i].setTarget (proc.apvts.getRawParameterValue (ids::band (b, "drive"))->load());
+        hillHeight[i].tick (dt, drag.index == b && drag.target != Target::crossover ? 40.0f : 16.0f);
 
-        const float want = b < numBands() ? 1.0f : 0.0f;
-        bandAnim[(size_t) b] += (want - bandAnim[(size_t) b]) * 0.25f;
+        presence[i].setTarget (b < nb ? 1.0f : 0.0f);
+        presence[i].tick (dt, 12.0f);
+
+        const bool hov = hover.index == b && hover.target != Target::crossover && hover.target != Target::none;
+        hoverAmt[i].setTarget (hov ? 1.0f : 0.0f);
+        hoverAmt[i].tick (dt, 18.0f);
+
+        selectAmt[i].setTarget (b == selected ? 1.0f : 0.0f);
+        selectAmt[i].tick (dt, 12.0f);
+
+        const float lvl = proc.getEngine().getBand (b).outputLevelDb.load();
+        glow[i].setTarget (juce::jlimit (0.0f, 1.0f, (lvl + 42.0f) / 42.0f));
+        glow[i].tick (dt, glow[i].target > glow[i].current ? 30.0f : 6.0f);
     }
 
+    for (int i = 0; i < kMaxCrossovers; ++i)
+    {
+        const bool on = (hover.target == Target::crossover && hover.index == i) || (drag.target == Target::crossover && drag.index == i);
+        xoverHover[(size_t) i].setTarget (on ? 1.0f : 0.0f);
+        xoverHover[(size_t) i].tick (dt, 18.0f);
+    }
+
+    hintAlpha.setTarget (nb == 1 && hover.target == Target::bandBody ? 1.0f : 0.0f);
+    hintAlpha.tick (dt, 8.0f);
+
+    // Output meter
+    {
+        const auto r = proc.outputMeter.read();
+        for (size_t c = 0; c < 2; ++c)
+        {
+            const float db = juce::Decibels::gainToDecibels (r.peak[c], -100.0f);
+            meterDb[c] = db > meterDb[c] ? db : juce::jmax (db, meterDb[c] - 30.0f * (float) dt);
+            meterHold[c] = db > meterHold[c] ? db : meterHold[c] - 12.0f * (float) dt;
+        }
+    }
+
+    if (onFrame) onFrame (dt);
     repaint();
 }
 
 //==============================================================================
 void MultibandDisplay::paint (juce::Graphics& g)
 {
-    const auto& t = st::Theme::get();
-    st::paint::well (g, plot, t.radiusLarge);
-
-    g.saveState();
-    juce::Path clip;
-    clip.addRoundedRectangle (plot, t.radiusLarge);
-    g.reduceClipRegion (clip);
-
-    drawGrid (g);
-    drawBands (g);
+    drawBackground (g);
     drawSpectrum (g);
+    drawHills (g);
     drawCrossovers (g);
+    drawLabels (g);
+    drawMeter (g);
 
-    g.restoreState();
-
-    // Frequency labels
-    g.setFont (st::fonts::medium (10.0f));
-    g.setColour (t.textFaint);
-    for (float f : { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f })
-    {
-        const float x = xForHz (f);
-        const auto txt = f >= 1000.0f ? juce::String ((int) (f / 1000.0f)) + "k" : juce::String ((int) f);
-        g.drawText (txt, juce::Rectangle<float> (x - 20.0f, labelsRow.getY() + 3.0f, 40.0f, 14.0f), juce::Justification::centred, false);
-    }
+    // Dissolve the bottom edge into the backdrop so the display has no hard border.
+    const auto& t = st::Theme::get();
+    auto fade = plot.withTop (plot.getBottom() - 70.0f);
+    g.setGradientFill (juce::ColourGradient (t.bg0.withAlpha (0.0f), 0.0f, fade.getY(), t.bg0, 0.0f, fade.getBottom(), false));
+    g.fillRect (fade);
 }
 
-void MultibandDisplay::drawGrid (juce::Graphics& g)
+void MultibandDisplay::drawBackground (juce::Graphics& g)
 {
     const auto& t = st::Theme::get();
 
+    // Deep gradient that dissolves into the editor backdrop at the bottom (no hard edges).
+    juce::ColourGradient bg (t.bg0.darker (0.35f), plot.getCentreX(), plot.getY(),
+                             t.bg0.withAlpha (0.0f), plot.getCentreX(), plot.getBottom(), false);
+    bg.addColour (0.75, t.bg0.darker (0.2f).withAlpha (0.85f));
+    g.setGradientFill (bg);
+    g.fillRect (plot);
+
+    // Frequency grid: hairlines that fade towards the bottom.
     for (float decade : { 10.0f, 100.0f, 1000.0f, 10000.0f })
         for (int m = 1; m <= 9; ++m)
         {
             const float f = decade * (float) m;
             if (f < minHz || f > maxHz) continue;
             const float x = xForHz (f);
-            const bool major = (m == 1 || m == 5 || m == 2);
-            g.setColour (juce::Colours::white.withAlpha (major ? 0.045f : 0.022f));
+            const bool major = (m == 1);
+            g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (major ? 0.05f : 0.022f), x, plot.getY(),
+                                                     juce::Colours::white.withAlpha (0.0f), x, plot.getBottom() - 40.0f, false));
             g.fillRect (x, plot.getY(), 1.0f, plot.getHeight());
         }
 
-    // Drive scale (right edge)
-    g.setFont (st::fonts::medium (9.5f));
-    for (float db : { 12.0f, 24.0f, 36.0f, 48.0f })
+    // Labels along the top, discreet
+    g.setFont (st::fonts::medium (10.0f));
+    for (float f : { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f })
     {
-        const float y = yForDrive (db);
-        g.setColour (juce::Colours::white.withAlpha (0.03f));
-        g.fillRect (plot.getX(), y, plot.getWidth(), 1.0f);
+        const float x = xForHz (f);
+        const auto txt = f >= 1000.0f ? juce::String ((int) (f / 1000.0f)) + "k" : juce::String ((int) f);
         g.setColour (t.textFaint.withAlpha (0.8f));
-        g.drawText (juce::String ((int) db), juce::Rectangle<float> (plot.getRight() - 30.0f, y - 12.0f, 24.0f, 11.0f),
-                    juce::Justification::centredRight, false);
+        g.drawText (txt, juce::Rectangle<float> (x + 4.0f, plot.getY() + 8.0f, 40.0f, 12.0f), juce::Justification::centredLeft, false);
     }
 }
 
@@ -218,133 +291,81 @@ void MultibandDisplay::drawSpectrum (juce::Graphics& g)
 {
     if (analyzerMode == AnalyzerMode::off) return;
     const auto& t = st::Theme::get();
-    auto area = plot.withTrimmedTop (36.0f);
+    auto area = plot.withTrimmedTop (28.0f);
 
     if (analyzerMode == AnalyzerMode::preAndPost)
     {
         auto pre = preSpectrum.createPath (area, specMinDb, specMaxDb, minHz, maxHz, false);
-        g.setColour (t.textDim.withAlpha (0.35f));
+        g.setColour (t.textDim.withAlpha (0.28f));
         g.strokePath (pre, juce::PathStrokeType (1.0f));
     }
 
     auto fill = postSpectrum.createPath (area, specMinDb, specMaxDb, minHz, maxHz, true);
-    g.setGradientFill (juce::ColourGradient (t.text.withAlpha (0.10f), 0.0f, area.getY(),
-                                             t.text.withAlpha (0.015f), 0.0f, area.getBottom(), false));
+    g.setGradientFill (juce::ColourGradient (t.text.withAlpha (0.085f), 0.0f, area.getY() + area.getHeight() * 0.3f,
+                                             t.text.withAlpha (0.0f), 0.0f, area.getBottom(), false));
     g.fillPath (fill);
 
     auto line = postSpectrum.createPath (area, specMinDb, specMaxDb, minHz, maxHz, false);
-    g.setColour (t.text.withAlpha (0.42f));
-    g.strokePath (line, juce::PathStrokeType (1.2f));
+    g.setColour (t.text.withAlpha (0.30f));
+    g.strokePath (line, juce::PathStrokeType (1.1f, juce::PathStrokeType::curved));
 }
 
-void MultibandDisplay::drawBands (juce::Graphics& g)
+void MultibandDisplay::drawHills (juce::Graphics& g)
 {
     const auto& t = st::Theme::get();
     const int nb = numBands();
 
+    // Unselected first, selected last (on top)
+    std::vector<int> order;
     for (int b = 0; b < nb; ++b)
+        if (b != selected) order.push_back (b);
+    if (selected < nb) order.push_back (selected);
+
+    for (int b : order)
     {
+        const auto i = (size_t) b;
         const auto colour = t.seriesColour (b);
-        const auto xr = bandXRange (b);
-        const bool isSel = b == selected;
-        const bool isHover = hover.index == b && hover.target != Target::crossover;
-        const auto handle = driveHandle (b);
+        const float pres = presence[i].current;
+        const float sel = selectAmt[i].current, hov = hoverAmt[i].current;
 
         const bool bypassed = proc.apvts.getRawParameterValue (ids::band (b, "bypass"))->load() > 0.5f;
         const bool muted = proc.apvts.getRawParameterValue (ids::band (b, "mute"))->load() > 0.5f;
-        const float activity = bypassed || muted ? 0.35f : 1.0f;
+        const float activity = (bypassed || muted) ? 0.35f : 1.0f;
 
-        auto column = juce::Rectangle<float> (xr.getStart(), plot.getY(), xr.getLength(), plot.getHeight());
+        const float h = heightForDrive (hillHeight[i].current) * pres;
 
-        // Column tint
-        g.setColour (colour.withAlpha ((isSel ? 0.055f : 0.02f) + (isHover ? 0.02f : 0.0f)));
-        g.fillRect (column);
+        juce::Path stroke, fill;
+        fill.startNewSubPath (plot.getX(), baseline());
+        for (int k = 0; k <= hillResolution; ++k)
+        {
+            const float x = plot.getX() + plot.getWidth() * (float) k / (float) hillResolution;
+            const float y = baseline() - h * bandMagnitude (b, hzForX (x));
+            if (k == 0) stroke.startNewSubPath (x, y); else stroke.lineTo (x, y);
+            fill.lineTo (x, y);
+        }
+        fill.lineTo (plot.getRight(), baseline());
+        fill.closeSubPath();
 
-        // Saturation fill below the drive line, glowing with the band's output level
-        auto fillArea = column.withTop (handle.y).reduced (1.0f, 0.0f);
-        const float glowAmt = 0.10f + 0.22f * glow[(size_t) b];
-        juce::ColourGradient grad (colour.withAlpha (glowAmt * activity * (isSel ? 1.25f : 0.9f)), 0.0f, handle.y,
-                                   colour.withAlpha (0.0f), 0.0f, plot.getBottom(), false);
+        const float top = baseline() - h;
+        const float fillAlpha = (0.10f + 0.16f * sel + 0.06f * hov + 0.08f * glow[i].current) * activity;
+        juce::ColourGradient grad (colour.withAlpha (fillAlpha), 0.0f, top,
+                                   colour.withAlpha (fillAlpha * 0.15f), 0.0f, baseline(), false);
         g.setGradientFill (grad);
-        g.fillRect (fillArea);
+        g.fillPath (fill);
 
-        // Drive line
-        juce::Path driveLine;
-        driveLine.startNewSubPath (xr.getStart() + 3.0f, handle.y);
-        driveLine.lineTo (xr.getEnd() - 3.0f, handle.y);
-        st::paint::glowStroke (g, driveLine, colour.withAlpha ((isSel ? 0.95f : 0.6f) * activity), isSel ? 2.0f : 1.5f, 6.0f);
+        const float lineAlpha = (0.45f + 0.5f * sel + 0.2f * hov) * activity;
+        st::paint::glowStroke (g, stroke, colour.withAlpha (juce::jmin (1.0f, lineAlpha)), 1.4f + 0.8f * sel, 5.0f + 5.0f * sel);
 
-        // Handle
-        {
-            const float rOuter = isSel || (hover.target == Target::driveHandle && hover.index == b) ? 8.0f : 6.5f;
-            g.setColour (colour.withAlpha (0.18f));
-            g.fillEllipse (juce::Rectangle<float> (rOuter * 3.0f, rOuter * 3.0f).withCentre (handle));
-            g.setColour (t.bg1);
-            g.fillEllipse (juce::Rectangle<float> (rOuter * 2.0f, rOuter * 2.0f).withCentre (handle));
-            g.setColour (colour);
-            g.drawEllipse (juce::Rectangle<float> (rOuter * 2.0f, rOuter * 2.0f).withCentre (handle), 2.0f);
-            g.fillEllipse (juce::Rectangle<float> (rOuter * 0.8f, rOuter * 0.8f).withCentre (handle));
-        }
-
-        // Drive value while dragging / hovering the handle
-        if ((drag.target == Target::driveHandle || drag.target == Target::bandBody) && drag.index == b)
-        {
-            auto txt = proc.bandParam (b, "drive").getCurrentValueAsText();
-            g.setFont (st::fonts::semibold (11.5f));
-            const float w = st::fonts::stringWidth (g.getCurrentFont(), txt) + 16.0f;
-            auto bubble = juce::Rectangle<float> (w, 20.0f).withCentre ({ handle.x, handle.y - 22.0f });
-            g.setColour (t.bg3.withAlpha (0.95f));
-            g.fillRoundedRectangle (bubble, 5.0f);
-            g.setColour (colour.withAlpha (0.7f));
-            g.drawRoundedRectangle (bubble, 5.0f, 1.0f);
-            g.setColour (t.text);
-            g.drawText (txt, bubble, juce::Justification::centred, false);
-        }
-
-        // Header pill with band number + style
-        {
-            auto pill = pillBounds (b);
-            g.setColour (isSel ? colour.withAlpha (0.22f) : t.bg2.withAlpha (0.85f));
-            g.fillRoundedRectangle (pill, 12.0f);
-            g.setColour (colour.withAlpha (isSel ? 0.85f : 0.4f));
-            g.drawRoundedRectangle (pill.reduced (0.5f), 12.0f, 1.0f);
-
-            auto content = pill.reduced (9.0f, 0.0f);
-            const bool canRemove = nb > 1 && pill.getWidth() > 60.0f;
-            if (canRemove && (isHover || isSel))
-            {
-                const bool over = hover.target == Target::removeButton && hover.index == b;
-                st::icons::draw (g, st::icons::Icon::close, removeBounds (b).reduced (2.5f), over ? t.text : t.textDim, 1.6f);
-                content.removeFromRight (16.0f);
-            }
-
-            g.setColour (colour);
-            g.fillEllipse (content.removeFromLeft (7.0f).withSizeKeepingCentre (7.0f, 7.0f));
-            content.removeFromLeft (6.0f);
-
-            if (pill.getWidth() > 70.0f)
-            {
-                const int style = proc.apvts.getRawParameterValue (ids::band (b, "style"))->load() > -1
-                                    ? (int) proc.apvts.getRawParameterValue (ids::band (b, "style"))->load() : 0;
-                g.setColour (isSel ? t.text : t.textDim);
-                g.setFont (st::fonts::semibold (11.0f));
-                g.drawText (getStyleInfo (style).name, content, juce::Justification::centredLeft, true);
-            }
-            else
-            {
-                g.setColour (isSel ? t.text : t.textDim);
-                g.setFont (st::fonts::semibold (11.0f));
-                g.drawText (juce::String (b + 1), content, juce::Justification::centredLeft, false);
-            }
-        }
-
-        // State badges
-        if (bypassed || muted)
-        {
-            g.setFont (st::fonts::caption (9.5f));
-            g.setColour (t.textFaint);
-            g.drawText (bypassed ? "BYPASSED" : "MUTED", column.withTop (plot.getBottom() - 22.0f), juce::Justification::centred, false);
-        }
+        // Drive handle
+        const auto hp = driveHandle (b);
+        const float r = 5.5f + 2.0f * sel + 1.5f * hov;
+        g.setColour (colour.withAlpha (0.16f + 0.14f * sel));
+        g.fillEllipse (juce::Rectangle<float> (r * 3.4f, r * 3.4f).withCentre (hp));
+        g.setColour (t.bg0);
+        g.fillEllipse (juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (hp));
+        g.setColour (colour.withAlpha (activity));
+        g.drawEllipse (juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (hp), 2.0f);
+        g.fillEllipse (juce::Rectangle<float> (r * 0.9f, r * 0.9f).withCentre (hp));
     }
 }
 
@@ -355,41 +376,125 @@ void MultibandDisplay::drawCrossovers (juce::Graphics& g)
 
     for (int i = 0; i < nb - 1; ++i)
     {
-        const float x = xForHz (crossover (i));
-        const bool active = (hover.target == Target::crossover && hover.index == i)
-                         || (drag.target == Target::crossover && drag.index == i);
+        const float a = xoverHover[(size_t) i].current;
+        const auto h = crossoverHandle (i);
 
-        g.setColour (active ? t.text.withAlpha (0.75f) : t.text.withAlpha (0.18f));
-        g.fillRect (x - 0.5f, plot.getY() + 38.0f, 1.0f, plot.getHeight() - 38.0f);
+        // A soft vertical light that only really appears on hover/drag
+        g.setGradientFill (juce::ColourGradient (t.text.withAlpha (0.04f + 0.30f * a), h.x, h.y,
+                                                 t.text.withAlpha (0.0f), h.x, baseline(), false));
+        g.fillRect (h.x - 0.5f, h.y, 1.0f, baseline() - h.y);
 
-        // grip
-        auto grip = juce::Rectangle<float> (8.0f, 30.0f).withCentre ({ x, plot.getCentreY() + 20.0f });
-        g.setColour (active ? t.text : t.bg4.brighter (0.25f));
-        g.fillRoundedRectangle (grip, 4.0f);
-        g.setColour (t.bg0.withAlpha (0.6f));
-        for (int k = -1; k <= 1; ++k)
-            g.fillRect (grip.getCentreX() - 2.0f, grip.getCentreY() + (float) k * 5.0f - 0.5f, 4.0f, 1.0f);
+        // Capsule grip sitting where the hills cross
+        auto grip = juce::Rectangle<float> (6.0f + 2.0f * a, 18.0f + 4.0f * a).withCentre ({ h.x, h.y - 2.0f });
+        g.setColour (t.bg0.withAlpha (0.85f));
+        g.fillRoundedRectangle (grip.expanded (2.0f), grip.getWidth());
+        g.setColour (t.text.withAlpha (0.35f + 0.6f * a));
+        g.fillRoundedRectangle (grip, grip.getWidth() * 0.5f);
 
-        if (active)
+        if (a > 0.02f)
         {
             auto txt = st::params::formatHz (crossover (i));
             g.setFont (st::fonts::semibold (11.0f));
-            const float w = st::fonts::stringWidth (g.getCurrentFont(), txt) + 14.0f;
-            auto bubble = juce::Rectangle<float> (w, 20.0f).withCentre ({ x, plot.getBottom() - 16.0f });
-            g.setColour (t.bg3);
-            g.fillRoundedRectangle (bubble, 5.0f);
-            g.setColour (t.text);
+            const float w = st::fonts::stringWidth (g.getCurrentFont(), txt) + 16.0f;
+            auto bubble = juce::Rectangle<float> (w, 20.0f).withCentre ({ h.x, h.y - 28.0f });
+            g.setColour (t.bg3.withAlpha (0.92f * a));
+            g.fillRoundedRectangle (bubble, 10.0f);
+            g.setColour (t.text.withAlpha (a));
             g.drawText (txt, bubble, juce::Justification::centred, false);
         }
     }
+}
 
-    // Hint for an empty single-band setup
-    if (nb == 1 && hover.target == Target::bandBody)
+void MultibandDisplay::drawLabels (juce::Graphics& g)
+{
+    const auto& t = st::Theme::get();
+    const int nb = numBands();
+
+    for (int b = 0; b < nb; ++b)
     {
-        g.setFont (st::fonts::medium (11.5f));
-        g.setColour (t.textFaint);
-        g.drawText ("Double-click to split into bands", plot.withTrimmedBottom (8.0f).removeFromBottom (20.0f), juce::Justification::centred, false);
+        const auto i = (size_t) b;
+        const auto colour = t.seriesColour (b);
+        const float sel = selectAmt[i].current, hov = hoverAmt[i].current;
+        auto lb = labelBounds (b);
+
+        const int style = (int) proc.apvts.getRawParameterValue (ids::band (b, "style"))->load();
+        const bool dragging = drag.index == b && (drag.target == Target::driveHandle || drag.target == Target::bandBody);
+
+        const juce::String text = dragging ? proc.bandParam (b, "drive").getCurrentValueAsText()
+                                           : juce::String (getStyleInfo (style).name);
+
+        g.setFont (st::fonts::semibold (11.5f));
+        g.setColour (t.text.withAlpha (0.45f + 0.55f * juce::jmax (sel, hov)));
+        g.drawText (text, lb, juce::Justification::centred, false);
+
+        // Small coloured tick under the label
+        g.setColour (colour.withAlpha (0.4f + 0.6f * sel));
+        g.fillRoundedRectangle (juce::Rectangle<float> (14.0f + 10.0f * sel, 2.0f).withCentre ({ lb.getCentreX(), lb.getBottom() + 3.0f }), 1.0f);
+
+        const bool bypassed = proc.apvts.getRawParameterValue (ids::band (b, "bypass"))->load() > 0.5f;
+        const bool muted = proc.apvts.getRawParameterValue (ids::band (b, "mute"))->load() > 0.5f;
+        const bool soloed = proc.apvts.getRawParameterValue (ids::band (b, "solo"))->load() > 0.5f;
+        if (bypassed || muted || soloed)
+        {
+            g.setFont (st::fonts::caption (9.0f));
+            g.setColour (soloed ? t.warning : t.textFaint);
+            g.drawText (soloed ? "SOLO" : bypassed ? "OFF" : "MUTED", lb.translated (0.0f, -15.0f), juce::Justification::centred, false);
+        }
+
+        // Remove button fades in on hover / selection
+        const float rm = nb > 1 ? juce::jmax (hov, sel * 0.6f) : 0.0f;
+        if (rm > 0.02f && ! dragging)
+        {
+            auto rb = removeBounds (b);
+            const bool over = hover.target == Target::removeButton && hover.index == b;
+            g.setColour ((over ? t.bg4 : t.bg2).withAlpha (0.9f * rm));
+            g.fillEllipse (rb);
+            st::icons::draw (g, st::icons::Icon::close, rb.reduced (3.5f), (over ? t.text : t.textDim).withAlpha (rm), 1.6f);
+        }
     }
+
+    if (hintAlpha.current > 0.01f)
+    {
+        g.setFont (st::fonts::medium (12.0f));
+        g.setColour (t.textDim.withAlpha (0.8f * hintAlpha.current));
+        const float y = panelArea.isEmpty() ? plot.getBottom() - 40.0f : panelArea.getY() - 70.0f;
+        g.drawText ("Double-click anywhere to split into bands", juce::Rectangle<float> (plot.getX(), y, plot.getWidth(), 18.0f),
+                    juce::Justification::centred, false);
+    }
+}
+
+void MultibandDisplay::drawMeter (juce::Graphics& g)
+{
+    const auto& t = st::Theme::get();
+    auto area = juce::Rectangle<float> (plot.getRight() - 18.0f, plot.getY() + 30.0f, 10.0f,
+                                        (panelArea.isEmpty() ? plot.getBottom() : panelArea.getY()) - plot.getY() - 60.0f);
+
+    auto yFor = [&] (float db) { return area.getBottom() - area.getHeight() * std::pow (juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 66.0f), 1.4f); };
+
+    for (int c = 0; c < 2; ++c)
+    {
+        auto bar = area.withWidth (4.0f).translated ((float) c * 6.0f, 0.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.04f));
+        g.fillRoundedRectangle (bar, 2.0f);
+
+        const float y = yFor (meterDb[(size_t) c]);
+        juce::ColourGradient grad (t.positive.withAlpha (0.8f), 0.0f, bar.getBottom(), t.danger, 0.0f, area.getY(), false);
+        grad.addColour (0.8, t.warning);
+        g.setGradientFill (grad);
+        g.fillRoundedRectangle (bar.withTop (y), 2.0f);
+
+        if (meterHold[(size_t) c] > -60.0f)
+        {
+            g.setColour (meterHold[(size_t) c] > 0.0f ? t.danger : t.text.withAlpha (0.7f));
+            g.fillRect (bar.getX(), yFor (meterHold[(size_t) c]) - 0.5f, bar.getWidth(), 1.0f);
+        }
+    }
+
+    const float peak = juce::jmax (meterHold[0], meterHold[1]);
+    g.setFont (st::fonts::medium (9.5f));
+    g.setColour (peak > 0.0f ? t.danger : t.textFaint);
+    g.drawText (peak <= -60.0f ? juce::String ("-inf") : juce::String (peak, 1),
+                juce::Rectangle<float> (area.getX() - 20.0f, area.getY() - 18.0f, 40.0f, 12.0f), juce::Justification::centred, false);
 }
 
 //==============================================================================
@@ -417,9 +522,7 @@ void MultibandDisplay::mouseDown (const juce::MouseEvent& e)
     dragStart = e.position;
     dragParam = nullptr;
 
-    if (drag.target == Target::none) return;
-
-    if (drag.target == Target::removeButton)
+    if (drag.target == Target::none || drag.target == Target::removeButton)
         return;
 
     if (drag.target == Target::crossover)
@@ -430,24 +533,18 @@ void MultibandDisplay::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Band body or drive handle: select band, drag adjusts drive.
     if (selected != drag.index)
     {
         selected = drag.index;
         if (onBandSelected) onBandSelected (selected);
     }
 
-    if (e.mods.isPopupMenu())
-    {
-        drag = {};
-        return;
-    }
+    if (e.mods.isPopupMenu()) { drag = {}; return; }
 
     proc.undoManager.beginNewTransaction ("Drive");
     dragParam = &proc.bandParam (drag.index, "drive");
     dragStartValue = dragParam->convertFrom0to1 (dragParam->getValue());
     dragParam->beginChangeGesture();
-    repaint();
 }
 
 void MultibandDisplay::mouseDrag (const juce::MouseEvent& e)
@@ -462,7 +559,10 @@ void MultibandDisplay::mouseDrag (const juce::MouseEvent& e)
 
     float db;
     if (drag.target == Target::driveHandle)
-        db = driveForY (e.position.y);
+    {
+        const float mag = juce::jmax (0.3f, bandMagnitude (drag.index, bandCentreHz (drag.index)));
+        db = driveForHeight ((baseline() - e.position.y) / mag);
+    }
     else
     {
         const float sens = e.mods.isShiftDown() ? 0.04f : 0.18f;
@@ -480,8 +580,7 @@ void MultibandDisplay::mouseUp (const juce::MouseEvent& e)
         if (h.target == Target::removeButton && h.index == drag.index)
         {
             proc.removeBand (drag.index);
-            selected = juce::jlimit (0, numBands() - 1, selected >= drag.index ? selected - 1 : selected);
-            selected = juce::jmax (0, selected);
+            selected = juce::jmax (0, juce::jlimit (0, numBands() - 1, selected >= drag.index ? selected - 1 : selected));
             if (onBandSelected) onBandSelected (selected);
         }
     }
@@ -491,7 +590,6 @@ void MultibandDisplay::mouseUp (const juce::MouseEvent& e)
 
     dragParam = nullptr;
     drag = {};
-    repaint();
 }
 
 void MultibandDisplay::mouseDoubleClick (const juce::MouseEvent& e)
@@ -511,7 +609,10 @@ void MultibandDisplay::mouseDoubleClick (const juce::MouseEvent& e)
     {
         const int before = bandAtX (e.position.x);
         proc.addBand (hzForX (e.position.x));
-        selected = juce::jmin (before + 1, numBands() - 1);
+        // The new band starts flat so it visibly grows into place.
+        const int added = juce::jmin (before + 1, numBands() - 1);
+        presence[(size_t) added].snap (0.0f);
+        selected = added;
         if (onBandSelected) onBandSelected (selected);
     }
 }

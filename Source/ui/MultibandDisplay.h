@@ -4,19 +4,28 @@
 namespace stsat
 {
 
-/** The hero display: spectrum analyser, band regions, crossover handles and per-band drive handles. */
-class MultibandDisplay : public juce::Component, private juce::Timer
+/** The hero display: spectrum, soft band "hills", crossover handles, drive handles, output meter.
+    Everything animates (hill heights, hover / selection glow, crossover handles). */
+class MultibandDisplay : public juce::Component
 {
 public:
     explicit MultibandDisplay (StSatProcessor&);
     ~MultibandDisplay() override;
 
     std::function<void (int band)> onBandSelected;
-    void setSelectedBand (int b) { selected = b; repaint(); }
+    void setSelectedBand (int b) { selected = b; }
     int getSelectedBand() const noexcept { return selected; }
 
     enum class AnalyzerMode { off, post, preAndPost };
     void setAnalyzerMode (AnalyzerMode m);
+
+    /** Where the floating band panel sits (local coords) so hills/handles stay readable above it. */
+    void setPanelArea (juce::Rectangle<float> r) { panelArea = r; }
+
+    /** X position (local) of a band's centre, for docking the floating panel. */
+    float getBandCentreX (int band) const;
+    /** Called every frame by the display's clock (lets the editor animate in sync). */
+    std::function<void (double dt)> onFrame;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -33,12 +42,9 @@ private:
     st::SpectrumAnalyzer preSpectrum, postSpectrum;
     AnalyzerMode analyzerMode = AnalyzerMode::post;
     int selected = 0;
-    double lastTick = 0.0;
+    juce::Rectangle<float> plot, panelArea;
 
-    juce::Rectangle<float> plot;      // analyser / band area
-    juce::Rectangle<float> labelsRow; // frequency labels
-
-    // Interaction state
+    // Interaction
     enum class Target { none, crossover, driveHandle, bandBody, removeButton };
     struct Hit { Target target = Target::none; int index = -1; };
     Hit hover, drag;
@@ -46,31 +52,39 @@ private:
     juce::Point<float> dragStart;
     juce::RangedAudioParameter* dragParam = nullptr;
 
-    // Animated per-band glow (smoothed output level)
-    std::array<float, kMaxBands> glow {};
-    std::array<float, kMaxBands> bandAnim {};
+    // Animation
+    std::array<st::Animated, kMaxBands> hillHeight, hoverAmt, selectAmt, presence, glow;
+    std::array<st::Animated, kMaxCrossovers> xoverHover;
+    st::Animated hintAlpha;
+    std::array<float, 2> meterDb { -100.0f, -100.0f }, meterHold { -100.0f, -100.0f };
+    std::unique_ptr<st::FrameClock> clock;
 
     static constexpr float minHz = 20.0f, maxHz = 20000.0f;
     float xForHz (float hz) const noexcept;
     float hzForX (float x) const noexcept;
-    float yForDrive (float db) const noexcept;
-    float driveForY (float y) const noexcept;
+    float heightForDrive (float db) const noexcept;
+    float driveForHeight (float h) const noexcept;
+    float baseline() const noexcept { return plot.getBottom(); }
 
     int numBands() const { return proc.getNumBands(); }
     float crossover (int i) const;
-    juce::Range<float> bandXRange (int b) const;
+    float bandMagnitude (int band, float hz) const;   // analytic LR magnitude (0..1)
+    float bandCentreHz (int band) const;
     int bandAtX (float x) const;
-    juce::Rectangle<float> pillBounds (int b) const;
-    juce::Rectangle<float> removeBounds (int b) const;
     juce::Point<float> driveHandle (int b) const;
+    juce::Rectangle<float> labelBounds (int b) const;
+    juce::Rectangle<float> removeBounds (int b) const;
+    juce::Point<float> crossoverHandle (int i) const;
 
     Hit hitTestAt (juce::Point<float>) const;
-    void timerCallback() override;
+    void frame (double dt);
 
-    void drawGrid (juce::Graphics&);
+    void drawBackground (juce::Graphics&);
     void drawSpectrum (juce::Graphics&);
-    void drawBands (juce::Graphics&);
+    void drawHills (juce::Graphics&);
     void drawCrossovers (juce::Graphics&);
+    void drawLabels (juce::Graphics&);
+    void drawMeter (juce::Graphics&);
 };
 
 } // namespace stsat
