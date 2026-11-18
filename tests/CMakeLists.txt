@@ -27,3 +27,15 @@ target_link_libraries(StSatDspTests
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
+
+# ---------------------------------------------------------------------------
+# Whole-plugin tests: processor smoke/stress tests + editor snapshots (PNG).
+#   StSatPluginTests [--snapshot <dir>]
+# Links the plugin's shared-code library, so it exercises the real processor.
+juce_add_console_app(StSatPluginTests PRODUCT_NAME "StSatPluginTests")
+target_sources(StSatPluginTests PRIVATE PluginTests.cpp)
+target_compile_features(StSatPluginTests PRIVATE cxx_std_20)
+target_link_libraries(StSatPluginTests PRIVATE STSat)
+target_include_directories(StSatPluginTests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../Source")
+target_include_directories(StSatPluginTests PRIVATE $<TARGET_PROPERTY:STSat,INCLUDE_DIRECTORIES>)
+target_compile_definitions(StSatPluginTests PRIVATE $<TARGET_PROPERTY:STSat,COMPILE_DEFINITIONS> $<TARGET_PROPERTY:STSat,INTERFACE_COMPILE_DEFINITIONS>)
