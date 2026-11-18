@@ -61,6 +61,8 @@ private:
     void updateEngineSettings() noexcept;
 
     void copyBand (int from, int to);
+    /** Re-targets modulation routings after bands were shifted. mapBand(old) returns the new band index or -1 to drop. */
+    void remapBandRoutings (const std::function<int (int)>& mapBand);
     void setParamPlain (const juce::String& id, float plain);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StSatProcessor)

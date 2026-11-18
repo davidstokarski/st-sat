@@ -132,8 +132,13 @@ static int runTests()
     p.addBand (500.0f);
     p.addBand (4000.0f);
     check (p.getNumBands() == 3, "addBand x2 -> 3 bands");
+    p.modMatrix.addRouting (st::mod::SourceId::lfo (1), stsat::ids::band (2, "drive"), 0.2f);
     p.removeBand (1);
     check (p.getNumBands() == 2, "removeBand -> 2 bands");
+    check (p.modMatrix.getRouting (st::mod::SourceId::lfo (1), stsat::ids::band (1, "drive")).has_value(), "routing follows band on remove");
+    p.addBand (100.0f);
+    check (p.modMatrix.getRouting (st::mod::SourceId::lfo (1), stsat::ids::band (2, "drive")).has_value(), "routing follows band on add");
+    p.modMatrix.clearRoutings();
 
     // ---- State round trip
     juce::MemoryBlock state;

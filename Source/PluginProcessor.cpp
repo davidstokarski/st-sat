@@ -228,6 +228,37 @@ void StSatProcessor::copyBand (int from, int to)
     }
 }
 
+void StSatProcessor::remapBandRoutings (const std::function<int (int)>& mapBand)
+{
+    const auto routings = modMatrix.getRoutings();
+    std::vector<st::mod::Routing> moved;
+
+    for (const auto& r : routings)
+    {
+        // Band parameters look like "b<n>_<suffix>"
+        if (! r.targetId.startsWithChar ('b') || ! r.targetId.containsChar ('_')) continue;
+        const int oldBand = r.targetId.substring (1).getIntValue() - 1;
+        if (! juce::isPositiveAndBelow (oldBand, kMaxBands)) continue;
+
+        const int newBand = mapBand (oldBand);
+        if (newBand == oldBand) continue;
+
+        modMatrix.removeRouting (r.source, r.targetId);
+        if (newBand >= 0)
+        {
+            auto copy = r;
+            copy.targetId = ids::band (newBand, r.targetId.fromFirstOccurrenceOf ("_", false, false));
+            moved.push_back (copy);
+        }
+    }
+
+    for (const auto& r : moved)
+    {
+        modMatrix.addRouting (r.source, r.targetId, r.depth);
+        if (! r.enabled) modMatrix.setRoutingEnabled (r.source, r.targetId, false);
+    }
+}
+
 void StSatProcessor::setCrossoverOrdered (int index, float hz, bool asGesture)
 {
     const int nb = getNumBands();
@@ -275,6 +306,9 @@ void StSatProcessor::addBand (float hz)
         setParamPlain (ids::crossover (i), xo[(size_t) i]);
 
     setParamPlain (ids::numBands, (float) (nb + 1));
+
+    // Bands above k moved up by one; the new band k+1 starts without modulation.
+    remapBandRoutings ([k] (int b) { return b > k ? b + 1 : b; });
 }
 
 void StSatProcessor::removeBand (int k)
@@ -302,6 +336,8 @@ void StSatProcessor::removeBand (int k)
             p->setValueNotifyingHost (p->getDefaultValue());
 
     setParamPlain (ids::numBands, (float) (nb - 1));
+
+    remapBandRoutings ([k] (int b) { return b == k ? -1 : (b > k ? b - 1 : b); });
 }
 
 void StSatProcessor::stateRestored() {}

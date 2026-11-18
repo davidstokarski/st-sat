@@ -3,6 +3,8 @@
 Multiband saturation with upward + downward dynamics. VST3 and AU, macOS.
 Built on [st-shell](https://github.com/davidstokarski/st-shell).
 
+![ST Sat](docs/screenshot.png)
+
 ## Features
 - Up to 6 bands, phase-coherent Linkwitz–Riley crossovers (12/24/48 dB/oct), draggable in the display
 - 26 saturation styles across Tube, Tape, Saturation, Amp, Clip and FX categories
