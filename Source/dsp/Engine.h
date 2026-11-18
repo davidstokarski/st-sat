@@ -119,6 +119,11 @@ public:
     void process (juce::AudioBuffer<float>& buffer, int numSamples) noexcept;
 
     int getLatencySamples() const noexcept { return oversampler.getLatencySamples(); }
+
+    /** Switches the oversampling factor (0..3 -> 1x..8x). Re-prepares the crossover and bands, so it
+        ALLOCATES: call only while audio processing is stopped/suspended (never from process()). */
+    void setQuality (int qualityIndex);
+    int getQuality() const noexcept { return currentFactor; }
     int getLatencyForQuality (int q) const noexcept { return oversampler.getLatencySamples (q); }
     int getOversamplingFactor() const noexcept { return oversampler.getFactor(); }
 
@@ -144,7 +149,7 @@ private:
     double baseRate = 48000.0;
     int maxBlock = 0, numCh = 2, currentFactor = -1;
 
-    void applyQuality();
+
 };
 
 } // namespace stsat

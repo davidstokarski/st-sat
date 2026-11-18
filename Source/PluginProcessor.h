@@ -2,7 +2,9 @@
 #include "Params.h"
 #include "dsp/Engine.h"
 
-class StSatProcessor : public st::ProcessorBase
+class StSatProcessor : public st::ProcessorBase,
+                       private juce::AudioProcessorValueTreeState::Listener,
+                       private juce::AsyncUpdater
 {
 public:
     StSatProcessor();
@@ -33,6 +35,9 @@ public:
 
     void stateRestored() override;
 
+    /** Applies a pending oversampling change now (normally done asynchronously on the message thread). */
+    void applyQualityChange();
+
 private:
     stsat::Engine engine;
 
@@ -55,7 +60,10 @@ private:
     // Base-rate band signals for envelope followers
     std::array<juce::AudioBuffer<float>, stsat::kMaxBands> bandEnvBuffers;
     std::array<int, stsat::kMaxBands> bandEnvCount {};
-    int lastLatency = -1;
+    bool prepared = false;
+
+    void parameterChanged (const juce::String&, float) override { triggerAsyncUpdate(); }
+    void handleAsyncUpdate() override { applyQualityChange(); }
 
     float value (const MRef&) const noexcept;
     void bind (MRef&, const juce::String& id);

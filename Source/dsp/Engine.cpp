@@ -386,14 +386,15 @@ void Engine::prepare (double sampleRate, int maxBlockSize, int channels)
     panR.setCurrentAndTarget (1.0f);
 
     currentFactor = -1;
-    applyQuality();
+    setQuality (global.qualityIndex);
     reset();
 }
 
-void Engine::applyQuality()
+void Engine::setQuality (int qualityIndex)
 {
-    const int q = juce::jlimit (0, 3, global.qualityIndex);
+    const int q = juce::jlimit (0, 3, qualityIndex);
     if (q == currentFactor) return;
+    global.qualityIndex = q;
 
     currentFactor = q;
     oversampler.setFactorIndex (q);
@@ -454,7 +455,6 @@ void Engine::setBand (int band, const BandSettings& s) noexcept
 void Engine::process (juce::AudioBuffer<float>& buffer, int n) noexcept
 {
     jassert (n <= maxBlock);
-    applyQuality();
 
     const int channels = juce::jmin (numCh, buffer.getNumChannels());
 

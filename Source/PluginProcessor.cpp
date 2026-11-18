@@ -70,9 +70,28 @@ StSatProcessor::StSatProcessor()
     };
 
     registerFactoryPresets (presets);
+    apvts.addParameterListener (ids::quality, this);
 }
 
-StSatProcessor::~StSatProcessor() = default;
+StSatProcessor::~StSatProcessor()
+{
+    apvts.removeParameterListener (ids::quality, this);
+    cancelPendingUpdate();
+}
+
+void StSatProcessor::applyQualityChange()
+{
+    const int q = juce::jlimit (0, 3, quality.getInt());
+    if (! prepared || q == engine.getQuality())
+        return;
+
+    // Re-preparing allocates, so never do it on the audio thread: pause processing (the wrapper
+    // outputs silence for the few blocks this takes), rebuild, resume, then tell the host.
+    suspendProcessing (true);
+    engine.setQuality (q);
+    suspendProcessing (false);
+    setLatencySamples (engine.getLatencySamples());
+}
 
 void StSatProcessor::bind (MRef& r, const juce::String& id)
 {
@@ -105,10 +124,11 @@ void StSatProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     bandEnvCount.fill (0);
 
     updateEngineSettings();
+    engine.setQuality (quality.getInt());
     engine.reset();
+    prepared = true;
 
-    lastLatency = engine.getLatencySamples();
-    setLatencySamples (lastLatency);
+    setLatencySamples (engine.getLatencySamples());
     juce::ignoreUnused (samplesPerBlock);
 }
 
@@ -214,12 +234,6 @@ void StSatProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
 
         updateEngineSettings();
         engine.process (chunk, n);
-    }
-
-    if (engine.getLatencySamples() != lastLatency)
-    {
-        lastLatency = engine.getLatencySamples();
-        setLatencySamples (lastLatency);
     }
 
     outputMeter.push (buffer, total);

@@ -106,6 +106,7 @@ static int runTests()
     for (int q = 0; q < 4; ++q)
     {
         setParam (p, stsat::ids::quality, (float) q);
+        p.applyQualityChange();   // normally async on the message thread
         for (int nb = 1; nb <= stsat::kMaxBands; ++nb)
         {
             setParam (p, stsat::ids::numBands, (float) nb);
@@ -164,6 +165,7 @@ static int runTests()
     {
         p.prepareToPlay (48000.0, 512);
         setParam (p, stsat::ids::quality, 2.0f);
+        p.applyQualityChange();
         setParam (p, stsat::ids::numBands, 6.0f);
         for (int b = 0; b < 6; ++b) setParam (p, stsat::ids::band (b, "dyn"), 50.0f);
         const int blocks = 400;
