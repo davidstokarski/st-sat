@@ -248,7 +248,7 @@ void FloatingBandPanel::paint (juce::Graphics& g)
 }
 
 //==============================================================================
-DynamicsPopover::DynamicsPopover (StSatProcessor& p, int b) : proc (p), band (b)
+DynamicsPopover::DynamicsPopover (StSatProcessor& p, int b) : st::Popover ("Upward / Downward Dynamics", "Band " + juce::String (b + 1)), proc (p), band (b)
 {
     const auto& t = st::Theme::get();
     auto* um = &proc.undoManager;
@@ -273,18 +273,7 @@ DynamicsPopover::DynamicsPopover (StSatProcessor& p, int b) : proc (p), band (b)
     knob (downR, "dyn_down_ratio", "Down Ratio", "Downward ratio");
     knob (release, "dyn_release", "Release", "Detector release");
 
-    closeButton.setMinimal (true);
-    closeButton.onClick = [this] { if (onClose) onClose(); };
-    addAndMakeVisible (closeButton);
-    setWantsKeyboardFocus (true);
-
     startTimerHz (30);
-}
-
-bool DynamicsPopover::keyPressed (const juce::KeyPress& k)
-{
-    if (k == juce::KeyPress::escapeKey) { if (onClose) onClose(); return true; }
-    return false;
 }
 
 void DynamicsPopover::timerCallback()
@@ -295,14 +284,9 @@ void DynamicsPopover::timerCallback()
     repaint (graph.toNearestInt().expanded (6));
 }
 
-void DynamicsPopover::resized()
+void DynamicsPopover::layoutContent (juce::Rectangle<int> r)
 {
-    auto r = getLocalBounds().reduced (margin).reduced (16, 12);
-    auto header = r.removeFromTop (24);
-    closeButton.setBounds (header.removeFromRight (22).withSizeKeepingCentre (22, 22).translated (4, 0));
-    header.removeFromRight (10);
-    position->setBounds (header.removeFromRight (96));
-    r.removeFromTop (8);
+    position->setBounds (getHeaderBounds().removeFromRight (96));
     graph = r.removeFromLeft (r.getHeight()).toFloat();
     r.removeFromLeft (12);
     const int w = r.getWidth() / 3, h = r.getHeight() / 2;
@@ -311,18 +295,9 @@ void DynamicsPopover::resized()
     downT->setBounds (r2.removeFromLeft (w)); downR->setBounds (r2.removeFromLeft (w)); release->setBounds (r2);
 }
 
-void DynamicsPopover::paint (juce::Graphics& g)
+void DynamicsPopover::paintContent (juce::Graphics& g)
 {
     const auto& t = st::Theme::get();
-    auto bg = getLocalBounds().toFloat().reduced ((float) margin);
-    st::paint::softShadow (g, bg, 9.0f, 14.0f, 0.6f);
-    g.setColour (juce::Colour (0xf01d181b));
-    g.fillRoundedRectangle (bg, 9.0f);
-    g.setColour (juce::Colours::white.withAlpha (0.09f));
-    g.drawRoundedRectangle (bg.reduced (0.5f), 9.0f, 1.0f);
-
-    st::paint::caption (g, "Upward / Downward Dynamics", juce::Rectangle<float> (bg.getX() + 16.0f, bg.getY() + 12.0f, 260.0f, 24.0f),
-                        t.text.withAlpha (0.9f), juce::Justification::centredLeft, 11.0f);
 
     // Transfer curve
     g.setColour (juce::Colours::black.withAlpha (0.35f));
@@ -385,7 +360,7 @@ void DynamicsPopover::paint (juce::Graphics& g)
 }
 
 //==============================================================================
-SpacePopover::SpacePopover (StSatProcessor& p, int b) : proc (p), band (b)
+SpacePopover::SpacePopover (StSatProcessor& p, int b) : st::Popover ("Space", "Band " + juce::String (b + 1)), proc (p), band (b)
 {
     const auto& t = st::Theme::get();
     auto* um = &proc.undoManager;
@@ -422,17 +397,7 @@ SpacePopover::SpacePopover (StSatProcessor& p, int b) : proc (p), band (b)
     duckSource->setTooltip ("What the reverb ducks against");
     addAndMakeVisible (*duckSource);
 
-    closeButton.setMinimal (true);
-    closeButton.onClick = [this] { if (onClose) onClose(); };
-    addAndMakeVisible (closeButton);
-    setWantsKeyboardFocus (true);
     startTimerHz (30);
-}
-
-bool SpacePopover::keyPressed (const juce::KeyPress& k)
-{
-    if (k == juce::KeyPress::escapeKey) { if (onClose) onClose(); return true; }
-    return false;
 }
 
 void SpacePopover::timerCallback()
@@ -448,13 +413,8 @@ void SpacePopover::timerCallback()
     }
 }
 
-void SpacePopover::resized()
+void SpacePopover::layoutContent (juce::Rectangle<int> r)
 {
-    auto r = getLocalBounds().reduced (margin).reduced (18, 14);
-    auto header = r.removeFromTop (24);
-    closeButton.setBounds (header.removeFromRight (22).withSizeKeepingCentre (22, 22).translated (4, 0));
-
-    r.removeFromTop (10);
     type->setBounds (r.removeFromTop (26));
     r.removeFromTop (14);
 
@@ -477,22 +437,10 @@ void SpacePopover::resized()
     duckSource->setBounds (rowB.removeFromLeft (150).withSizeKeepingCentre (150, 26).translated (0, -8));
 }
 
-void SpacePopover::paint (juce::Graphics& g)
+void SpacePopover::paintContent (juce::Graphics& g)
 {
     const auto& t = st::Theme::get();
-    auto bg = getLocalBounds().toFloat().reduced ((float) margin);
-    st::paint::softShadow (g, bg, 9.0f, 14.0f, 0.6f);
-    g.setColour (juce::Colour (0xf41d181b));
-    g.fillRoundedRectangle (bg, 9.0f);
-    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.11f), 0.0f, bg.getY(),
-                                             juce::Colours::white.withAlpha (0.03f), 0.0f, bg.getY() + 60.0f, false));
-    g.drawRoundedRectangle (bg.reduced (0.5f), 9.0f, 1.0f);
-
-    auto title = juce::Rectangle<float> (bg.getX() + 18.0f, bg.getY() + 14.0f, 300.0f, 24.0f);
-    st::paint::caption (g, "Space", title, t.text.withAlpha (0.92f), juce::Justification::centredLeft, 11.5f);
-    g.setFont (st::fonts::medium (11.5f));
-    g.setColour (t.textFaint);
-    g.drawText ("Band " + juce::String (band + 1), title.withTrimmedLeft (54.0f), juce::Justification::centredLeft, false);
+    const auto bg = getPanelBounds().toFloat();
 
     // Reverb envelope preview: pre-delay, build-up and decay, ducking shown as a dip.
     {
@@ -561,10 +509,7 @@ void SpacePopover::paint (juce::Graphics& g)
 
         // soft divider between the shape and dynamics rows (fades at both ends)
         const float y = (float) comp->getY() - 26.0f;
-        juce::ColourGradient div (juce::Colours::white.withAlpha (0.0f), bg.getX() + 18.0f, y, juce::Colours::white.withAlpha (0.0f), bg.getRight() - 18.0f, y, false);
-        div.addColour (0.5, juce::Colours::white.withAlpha (0.08f));
-        g.setGradientFill (div);
-        g.fillRect (bg.getX() + 18.0f, y, bg.getWidth() - 36.0f, 1.0f);
+        st::paint::fadedLine (g, { bg.getX() + 18.0f, y }, { bg.getRight() - 18.0f, y }, juce::Colours::white.withAlpha (0.08f), 1.0f, 0.5f);
     }
 }
 
@@ -619,29 +564,10 @@ void FooterBar::setAnalyzerMode (int m)
 void FooterBar::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
+    st::paint::tray (g, r);
 
-    // Dark bar with rounded upper corners, like a tray the controls sit in.
-    juce::Path bar;
-    bar.addRoundedRectangle (r.getX() + 6.0f, r.getY(), r.getWidth() - 12.0f, r.getHeight() + 20.0f, 18.0f, 18.0f, true, true, false, false);
-    g.setColour (juce::Colours::black.withAlpha (0.42f));
-    g.fillPath (bar);
-    {
-        // edge light that fades out towards both corners
-        juce::ColourGradient edge (juce::Colours::white.withAlpha (0.0f), r.getX(), 0.0f, juce::Colours::white.withAlpha (0.0f), r.getRight(), 0.0f, false);
-        edge.addColour (0.15, juce::Colours::white.withAlpha (0.09f));
-        edge.addColour (0.85, juce::Colours::white.withAlpha (0.09f));
-        g.setGradientFill (edge);
-        g.fillRect (r.getX() + 24.0f, r.getY(), r.getWidth() - 48.0f, 1.0f);
-    }
-
-    g.setColour (juce::Colours::white.withAlpha (0.07f));
     for (float x : dividers)
-    {
-        juce::ColourGradient dg (juce::Colours::white.withAlpha (0.0f), x, r.getY() + 6.0f, juce::Colours::white.withAlpha (0.0f), x, r.getBottom() - 6.0f, false);
-        dg.addColour (0.5, juce::Colours::white.withAlpha (0.10f));
-        g.setGradientFill (dg);
-        g.fillRect (x, r.getY() + 6.0f, 1.0f, r.getHeight() - 12.0f);
-    }
+        st::paint::fadedLine (g, { x + 0.5f, r.getY() + 6.0f }, { x + 0.5f, r.getBottom() - 6.0f }, juce::Colours::white.withAlpha (0.10f), 1.0f, 0.5f);
 }
 
 void FooterBar::resized()
