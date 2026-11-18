@@ -57,7 +57,7 @@ echo "==> Zipping"
 VERSIONED="$DIST/$SLUG-$VERSION-macOS.zip"
 STABLE="$DIST/$SLUG-macOS.zip"
 rm -f "$VERSIONED" "$STABLE"
-(cd "$DIST" && ditto -c -k --sequesterRsrc --keepParent "$PRODUCT $VERSION" "$VERSIONED")
+(cd "$DIST" && ditto -c -k --norsrc --noextattr --noqtn --keepParent "$PRODUCT $VERSION" "$VERSIONED")
 cp "$VERSIONED" "$STABLE"
 ls -lh "$VERSIONED" "$STABLE"
 
