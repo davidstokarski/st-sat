@@ -63,17 +63,24 @@ class DynamicsPopover : public juce::Component, private juce::Timer
 public:
     DynamicsPopover (StSatProcessor&, int band);
     ~DynamicsPopover() override { stopTimer(); }
-    static constexpr int width = 430, height = 182;
+    /** Panel size; the component is larger by `margin` on every side so the shadow has room. */
+    static constexpr int panelWidth = 430, panelHeight = 182, margin = 22;
+    static constexpr int width = panelWidth + 2 * margin, height = panelHeight + 2 * margin;
     int getBand() const noexcept { return band; }
+
+    std::function<void()> onClose;
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
+    bool hitTest (int x, int y) override { return getLocalBounds().reduced (margin).contains (x, y); }
 
 private:
     StSatProcessor& proc;
     const int band;
     std::unique_ptr<st::Segmented> position;
     std::unique_ptr<st::Knob> upT, upR, downT, downR, attack, release;
+    st::IconButton closeButton { st::icons::Icon::close, "Close" };
     juce::Rectangle<float> graph;
     float liveIn = -100.0f, liveGain = 0.0f;
 

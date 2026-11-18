@@ -165,7 +165,7 @@ void FloatingBandPanel::resized()
     const int by = 10, bh = 23;
     bypass->setBounds (28, by, 30, bh);
     channels->setBounds (64, by, 78, bh);
-    style->setBounds (148, by, 168, bh);
+    style->setBounds (148, by, 146, bh);
     closeButton.setBounds (width - 56, by, 30, bh);
     mute->setBounds (width - 90, by, 28, bh);
     solo->setBounds (width - 122, by, 28, bh);
@@ -182,7 +182,7 @@ void FloatingBandPanel::resized()
     for (int i = 0; i < 4; ++i)
         tone[(size_t) i]->setBounds (toneArea.getX() + i * 26, toneArea.getY(), 26, 82);
 
-    level->setBounds (532, 18, 94, 106);
+    level->setBounds (536, 36, 88, 96);
 }
 
 void FloatingBandPanel::paint (juce::Graphics& g)
@@ -253,7 +253,18 @@ DynamicsPopover::DynamicsPopover (StSatProcessor& p, int b) : proc (p), band (b)
     knob (downR, "dyn_down_ratio", "Down Ratio", "Downward ratio");
     knob (release, "dyn_release", "Release", "Detector release");
 
+    closeButton.setMinimal (true);
+    closeButton.onClick = [this] { if (onClose) onClose(); };
+    addAndMakeVisible (closeButton);
+    setWantsKeyboardFocus (true);
+
     startTimerHz (30);
+}
+
+bool DynamicsPopover::keyPressed (const juce::KeyPress& k)
+{
+    if (k == juce::KeyPress::escapeKey) { if (onClose) onClose(); return true; }
+    return false;
 }
 
 void DynamicsPopover::timerCallback()
@@ -266,8 +277,10 @@ void DynamicsPopover::timerCallback()
 
 void DynamicsPopover::resized()
 {
-    auto r = getLocalBounds().reduced (16, 12);
+    auto r = getLocalBounds().reduced (margin).reduced (16, 12);
     auto header = r.removeFromTop (24);
+    closeButton.setBounds (header.removeFromRight (22).withSizeKeepingCentre (22, 22).translated (4, 0));
+    header.removeFromRight (10);
     position->setBounds (header.removeFromRight (96));
     r.removeFromTop (8);
     graph = r.removeFromLeft (r.getHeight()).toFloat();
@@ -281,14 +294,14 @@ void DynamicsPopover::resized()
 void DynamicsPopover::paint (juce::Graphics& g)
 {
     const auto& t = st::Theme::get();
-    auto bg = getLocalBounds().toFloat().reduced (1.0f);
+    auto bg = getLocalBounds().toFloat().reduced ((float) margin);
     st::paint::softShadow (g, bg, 9.0f, 14.0f, 0.6f);
     g.setColour (juce::Colour (0xf01d181b));
     g.fillRoundedRectangle (bg, 9.0f);
     g.setColour (juce::Colours::white.withAlpha (0.09f));
     g.drawRoundedRectangle (bg.reduced (0.5f), 9.0f, 1.0f);
 
-    st::paint::caption (g, "Upward / Downward Dynamics", juce::Rectangle<float> (16.0f, 12.0f, 260.0f, 24.0f),
+    st::paint::caption (g, "Upward / Downward Dynamics", juce::Rectangle<float> (bg.getX() + 16.0f, bg.getY() + 12.0f, 260.0f, 24.0f),
                         t.text.withAlpha (0.9f), juce::Justification::centredLeft, 11.0f);
 
     // Transfer curve
@@ -342,7 +355,7 @@ void DynamicsPopover::paint (juce::Graphics& g)
     if (! active)
     {
         g.setColour (t.textFaint);
-        g.drawFittedText ("Turn up Dynamics\nto engage", graph.reduced (8.0f).toNearestInt(), juce::Justification::centred, 2);
+        g.drawFittedText ("Turn up Dynamics\nto engage", graph.reduced (10.0f, 8.0f).toNearestInt(), juce::Justification::topLeft, 2);
     }
     else
     {

@@ -45,12 +45,14 @@ float runNoise (StSatProcessor& p, int blocks, int blockSize, bool& finite, doub
 /** Renders the editor after letting its timers run for a while (needs a running message loop). */
 struct Snapshotter : juce::Timer
 {
-    struct Job { std::function<void()> setup; juce::String name; float scale = 1.0f; };
+    struct Job { std::function<void()> setup; juce::String name; float scale = 1.0f;
+                 std::function<void (juce::Component&)> afterOpen; };
     StSatProcessor& p;
     juce::File dir;
     std::vector<Job> jobs;
     size_t index = 0;
     int ticks = 0;
+    bool opened = false;
     std::unique_ptr<juce::AudioProcessorEditor> ed;
 
     Snapshotter (StSatProcessor& proc, juce::File d) : p (proc), dir (d) {}
@@ -65,12 +67,15 @@ struct Snapshotter : juce::Timer
             ed->setSize (juce::roundToInt ((float) StSatEditor::designWidth * jobs[index].scale),
                          juce::roundToInt ((float) StSatEditor::designHeight * jobs[index].scale));
             ticks = 0;
+            opened = false;
         }
 
         bool f = true;
         runNoise (p, 4, 256, f);
 
-        if (++ticks > 45)
+        if (! opened && ticks > 6 && jobs[index].afterOpen) { jobs[index].afterOpen (*ed); opened = true; }
+
+        if (++ticks > 50)
         {
             auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 2.0f);
             auto file = dir.getChildFile (jobs[index].name + ".png");
@@ -212,6 +217,33 @@ struct SnapshotApp : juce::JUCEApplicationBase
             p.uiState.setProperty ("dynExpanded", true, nullptr);
         }, "03_updown_mod" });
         snap->jobs.push_back ({ [&p] { p.uiState.setProperty ("dynExpanded", false, nullptr); }, "04_small_scale", 0.75f });
+
+        auto find = [] (juce::Component& root, auto pred) -> juce::Component*
+        {
+            std::function<juce::Component* (juce::Component&)> rec = [&] (juce::Component& c) -> juce::Component*
+            {
+                if (pred (c)) return &c;
+                for (auto* ch : c.getChildren()) if (auto* r = rec (*ch)) return r;
+                return nullptr;
+            };
+            return rec (root);
+        };
+
+        snap->jobs.push_back ({ [&p] { p.presets.loadPreset (0); }, "05_dynamics_popover", 1.0f, [find] (juce::Component& ed)
+        {
+            if (auto* panel = dynamic_cast<stsat::FloatingBandPanel*> (find (ed, [] (juce::Component& c) { return dynamic_cast<stsat::FloatingBandPanel*> (&c) != nullptr; })))
+                if (panel->onDynamicsDetail) panel->onDynamicsDetail();
+        } });
+
+        snap->jobs.push_back ({ [&p]
+        {
+            auto& s = p.param (p.modMatrix.getParamId (st::mod::SourceId::lfo (0), st::mod::ids::sync));
+            s.setValueNotifyingHost (1.0f);
+        }, "06_lfo_popover_synced", 1.0f, [find] (juce::Component& ed)
+        {
+            if (auto* strip = dynamic_cast<st::ModulationStrip*> (find (ed, [] (juce::Component& c) { return dynamic_cast<st::ModulationStrip*> (&c) != nullptr; })))
+                strip->showPopover (0);
+        } });
         snap->startTimerHz (60);
     }
 };

@@ -13,6 +13,8 @@ StSatEditor::StSatEditor (StSatProcessor& p)
     auto& content = getContent();
     content.addAndMakeVisible (display);
     content.addAndMakeVisible (footer);
+    footer.setBufferedToImage (true);
+    header.setBufferedToImage (true);
     header.toFront (false);
 
     display.setHandleRange (104.0f, (float) panelY - 24.0f);
@@ -76,6 +78,7 @@ void StSatEditor::selectBand (int b, bool animateChange, bool force)
     dynPopover.reset();
 
     bandPanel = std::make_unique<FloatingBandPanel> (proc, b);
+    bandPanel->setBufferedToImage (true);
     bandPanel->onDynamicsDetail = [this] { toggleDynamicsPopover(); };
     bandPanel->onRemoveBand = [this]
     {
@@ -110,7 +113,9 @@ void StSatEditor::toggleDynamicsPopover()
     }
 
     dynPopover = std::make_unique<DynamicsPopover> (proc, selectedBand);
+    dynPopover->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<StSatEditor> (this)] { if (safe != nullptr) safe->dynPopover.reset(); }); };
     getContent().addAndMakeVisible (*dynPopover);
+    dynPopover->grabKeyboardFocus();
     if (modTrails != nullptr) modTrails->refresh();
     popoverFade.snap (0.0f);
     animate (0.0);
@@ -149,8 +154,9 @@ void StSatEditor::animate (double dt)
         popoverFade.setTarget (1.0f);
         popoverFade.tick (dt, 16.0f);
         const auto anchor = bandPanel->getDynamicsAnchor() + bandPanel->getPosition();
-        const int x = juce::jlimit (8, designWidth - 8 - DynamicsPopover::width, anchor.x - DynamicsPopover::width / 2);
-        const int y = panelY - DynamicsPopover::height - 2 + juce::roundToInt ((1.0f - popoverFade.current) * 10.0f);
+        const int m = DynamicsPopover::margin;
+        const int x = juce::jlimit (8 - m, designWidth - 8 + m - DynamicsPopover::width, anchor.x - DynamicsPopover::width / 2);
+        const int y = panelY - DynamicsPopover::height + m - 2 + juce::roundToInt ((1.0f - popoverFade.current) * 10.0f);
         dynPopover->setBounds (x, y, DynamicsPopover::width, DynamicsPopover::height);
         dynPopover->setAlpha (popoverFade.current);
     }

@@ -136,39 +136,51 @@ void MultibandDisplay::resized()
 
 void MultibandDisplay::frame (double dt)
 {
+    bool changed = false;
+
     if (analyzerMode != AnalyzerMode::off)
     {
-        postSpectrum.update (dt);
-        if (analyzerMode == AnalyzerMode::preAndPost) preSpectrum.update (dt);
+        changed |= postSpectrum.update (dt);
+        if (analyzerMode == AnalyzerMode::preAndPost) changed |= preSpectrum.update (dt);
     }
 
     for (int b = 0; b < kMaxBands; ++b)
     {
         const auto i = (size_t) b;
         handleY[i].setTarget (yForDrive (proc.apvts.getRawParameterValue (ids::band (b, "level"))->load()));
-        handleY[i].tick (dt, drag.index == b && drag.target == Target::handle ? 60.0f : 18.0f);
+        changed |= handleY[i].tick (dt, drag.index == b && drag.target == Target::handle ? 60.0f : 18.0f);
 
         const bool hov = hover.index == b && (hover.target == Target::handle || hover.target == Target::bandBody);
         hoverAmt[i].setTarget (hov ? 1.0f : 0.0f);
-        hoverAmt[i].tick (dt, 16.0f);
+        changed |= hoverAmt[i].tick (dt, 16.0f);
         selectAmt[i].setTarget (b == selected ? 1.0f : 0.0f);
-        selectAmt[i].tick (dt, 10.0f);
+        changed |= selectAmt[i].tick (dt, 10.0f);
     }
 
     for (int i = 0; i < kMaxCrossovers; ++i)
     {
         const bool on = (hover.target == Target::crossover && hover.index == i) || (drag.target == Target::crossover && drag.index == i);
         xoverHover[(size_t) i].setTarget (on ? 1.0f : 0.0f);
-        xoverHover[(size_t) i].tick (dt, 18.0f);
+        changed |= xoverHover[(size_t) i].tick (dt, 18.0f);
         xoverPos[(size_t) i].setTarget (crossover (i));
-        xoverPos[(size_t) i].tick (dt, drag.target == Target::crossover ? 80.0f : 20.0f);
+        changed |= xoverPos[(size_t) i].tick (dt, drag.target == Target::crossover ? 80.0f : 20.0f);
     }
 
     hintAlpha.setTarget (numBands() == 1 && hover.target == Target::bandBody ? 1.0f : 0.0f);
-    hintAlpha.tick (dt, 8.0f);
+    changed |= hintAlpha.tick (dt, 8.0f);
+
+    // Slow refresh for state that isn't animated (band count, styles, bypass, modulation dots).
+    sinceRepaint += dt;
+    const int nb = numBands();
+    if (nb != lastBandCount || drag.target != Target::none) { lastBandCount = nb; changed = true; }
 
     if (onFrame) onFrame (dt);
-    repaint();
+
+    if (changed || sinceRepaint > 0.25)
+    {
+        sinceRepaint = 0.0;
+        repaint();
+    }
 }
 
 //==============================================================================
@@ -227,12 +239,13 @@ void MultibandDisplay::drawSpectrum (juce::Graphics& g)
 {
     if (analyzerMode == AnalyzerMode::off) return;
     const auto& t = st::Theme::get();
-    auto area = plot.withTrimmedTop (48.0f).withBottom (handleBottom + 40.0f);
+    auto area = plot.withTrimmedTop (48.0f);
 
     if (analyzerMode == AnalyzerMode::preAndPost)
     {
         auto pre = preSpectrum.createPath (area, specMinDb, specMaxDb, minHz, maxHz, false);
-        g.setColour (t.textDim.withAlpha (0.22f));
+        g.setGradientFill (juce::ColourGradient (t.textDim.withAlpha (0.25f), 0.0f, area.getY(),
+                                                 t.textDim.withAlpha (0.0f), 0.0f, area.getBottom() - 10.0f, false));
         g.strokePath (pre, juce::PathStrokeType (1.0f));
     }
 
@@ -241,8 +254,12 @@ void MultibandDisplay::drawSpectrum (juce::Graphics& g)
                                              t.spectrum.withAlpha (0.0f), 0.0f, area.getBottom(), false));
     g.fillPath (fill);
 
+    // The line fades out towards the floor so silent regions never draw a flat line.
     auto line = postSpectrum.createPath (area, specMinDb, specMaxDb, minHz, maxHz, false);
-    g.setColour (t.spectrum.withAlpha (0.62f));
+    juce::ColourGradient lineGrad (t.spectrum.withAlpha (0.65f), 0.0f, area.getY(),
+                                   t.spectrum.withAlpha (0.0f), 0.0f, area.getBottom() - 4.0f, false);
+    lineGrad.addColour (0.7, t.spectrum.withAlpha (0.45f));
+    g.setGradientFill (lineGrad);
     g.strokePath (line, juce::PathStrokeType (1.25f, juce::PathStrokeType::curved));
 }
 

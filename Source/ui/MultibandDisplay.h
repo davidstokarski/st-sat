@@ -55,6 +55,8 @@ private:
     std::array<st::Animated, kMaxBands> handleY, hoverAmt, selectAmt;
     std::array<st::Animated, kMaxCrossovers> xoverHover, xoverPos;
     st::Animated hintAlpha;
+    double sinceRepaint = 0.0;
+    int lastBandCount = -1;
     std::unique_ptr<st::FrameClock> clock;
 
     static constexpr float minHz = 20.0f, maxHz = 20000.0f;
