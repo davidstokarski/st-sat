@@ -26,6 +26,17 @@ struct BandSettings
     bool bypass = false;
     float audible = 1.0f;           // 0 = muted (mute / solo logic), 1 = audible
     bool autoGain = true;
+
+    struct Space
+    {
+        int type = 3;
+        float mix = 0.0f;            // 0..1
+        float decaySeconds = 2.0f, size = 0.5f, predelayMs = 12.0f, tone = 0.0f, width = 1.0f;
+        float compression = 0.0f;    // 0..1
+        float duck = 0.0f;           // 0..1
+        int duckSource = 0;          // 0 self, 1 all bands, 2 input, 3.. band n
+        float duckReleaseMs = 250.0f;
+    } space;
 };
 
 /** One band of the multiband engine. Runs at the oversampled rate. */
@@ -39,11 +50,16 @@ public:
     void setSettings (const BandSettings&) noexcept;
     /** In place. `numSamples` at the oversampled rate. */
     void process (juce::AudioBuffer<float>& band, int numSamples) noexcept;
+    /** Adds this band's Space (reverb) to `band`, ducked by `duckSourcePeak` (linear peak of the chosen source this block). */
+    void processSpace (juce::AudioBuffer<float>& band, int numSamples, float duckSourcePeak) noexcept;
+    const BandSettings& getSettings() const noexcept { return settings; }
 
     // UI feeds
     std::atomic<float> outputLevelDb { -100.0f };
     std::atomic<float> gainChangeDb { 0.0f };
     std::atomic<float> detectorDb { -100.0f };
+    std::atomic<float> spaceDuckDb { 0.0f };       // current ducking gain (<= 0)
+    std::atomic<float> spaceLevelDb { -100.0f };   // wet output level
 
     const Saturator& getSaturator() const noexcept { return saturator; }
 
@@ -62,6 +78,14 @@ private:
     juce::AudioBuffer<float> dry;
 
     st::dsp::LinearSmoother feedbackGain, wet, gainL, gainR, bypassMix, audibleGain, spreadL, spreadR;
+
+    // Space
+    st::dsp::Reverb reverb;
+    st::dsp::UpDownCompressor spaceComp;
+    juce::AudioBuffer<float> spaceWet;
+    st::dsp::LinearSmoother spaceMix, duckGain;
+    float duckEnv = 0.0f, spaceLevel = 0.0f;
+    bool spaceRunning = false;
     std::array<float, 2> feedbackState {};
     ChannelMode lastChannelMode = ChannelMode::stereo;
     float levelFollower = 0.0f, levelCoeff = 0.999f;

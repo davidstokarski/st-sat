@@ -46,7 +46,8 @@ private:
     struct BandRefs
     {
         MRef style, drive, driveSpread, dyn, upT, upR, downT, downR, attack, release, dynPos,
-             toneLow, toneLmid, toneHmid, toneHigh, fb, fbFreq, mix, level, pan, chan, mute, solo, bypass;
+             toneLow, toneLmid, toneHmid, toneHigh, fb, fbFreq, mix, level, pan, chan, mute, solo, bypass,
+             spType, spMix, spDecay, spSize, spPre, spTone, spWidth, spComp, spDuck, spDuckSrc, spDuckRel;
     };
     std::array<BandRefs, stsat::kMaxBands> bandRefs;
     std::unordered_map<juce::String, int> targetIndex;

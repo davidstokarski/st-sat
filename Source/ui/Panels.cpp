@@ -146,10 +146,21 @@ FloatingBandPanel::FloatingBandPanel (StSatProcessor& p, int b) : proc (p), band
     level->setRimParameter (&P ("pan"), "Pan");
     level->setTooltip ("Band level. Drag the red ring to pan the band.");
 
+    knob (space, "space_mix", "Space", st::Knob::Size::medium, L::classic, "Per-band reverb amount. Click the dots for sound, compression and ducking.");
+    spaceDetail.setButtonText (juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2")));
+    spaceDetail.setFontHeight (11.0f);
+    spaceDetail.onClick = [this] { if (onSpaceDetail) onSpaceDetail(); };
+    addAndMakeVisible (spaceDetail);
+
     dynDetail.setButtonText (juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2")));
     dynDetail.setFontHeight (11.0f);
     dynDetail.onClick = [this] { if (onDynamicsDetail) onDynamicsDetail(); };
     addAndMakeVisible (dynDetail);
+}
+
+juce::Point<int> FloatingBandPanel::getSpaceAnchor() const
+{
+    return { space->getBounds().getCentreX(), 0 };
 }
 
 juce::Point<int> FloatingBandPanel::getDynamicsAnchor() const
@@ -183,6 +194,8 @@ void FloatingBandPanel::resized()
         tone[(size_t) i]->setBounds (toneArea.getX() + i * 26, toneArea.getY(), 26, 82);
 
     level->setBounds (536, 36, 88, 96);
+    space->setBounds (640, 38, 70, 74);
+    spaceDetail.setBounds (space->getRight() - 16, 36, 22, 14);
 }
 
 void FloatingBandPanel::paint (juce::Graphics& g)
@@ -194,9 +207,16 @@ void FloatingBandPanel::paint (juce::Graphics& g)
     g.fillRoundedRectangle (box.translated (0.0f, 3.0f).expanded (2.0f), 9.0f);
     g.setColour (t.glassPanel);
     g.fillRoundedRectangle (box, 8.0f);
-    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.10f), 0.0f, box.getY(),
-                                             juce::Colours::white.withAlpha (0.02f), 0.0f, box.getBottom(), false));
+    g.setColour (juce::Colours::white.withAlpha (0.035f));
     g.drawRoundedRectangle (box.reduced (0.5f), 8.0f, 1.0f);
+    {
+        // top edge light: bright in the middle, fading towards both ends
+        juce::ColourGradient edge (juce::Colours::white.withAlpha (0.0f), box.getX(), 0.0f, juce::Colours::white.withAlpha (0.0f), box.getRight(), 0.0f, false);
+        edge.addColour (0.25, juce::Colours::white.withAlpha (0.13f));
+        edge.addColour (0.75, juce::Colours::white.withAlpha (0.13f));
+        g.setGradientFill (edge);
+        g.fillRect (box.getX() + 8.0f, box.getY() + 0.5f, box.getWidth() - 16.0f, 1.0f);
+    }
 
     // "FEEDBACK — FREQ" link line between the two captions
     {
@@ -365,6 +385,190 @@ void DynamicsPopover::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+SpacePopover::SpacePopover (StSatProcessor& p, int b) : proc (p), band (b)
+{
+    const auto& t = st::Theme::get();
+    auto* um = &proc.undoManager;
+    auto P = [this] (const char* s) -> juce::RangedAudioParameter& { return proc.bandParam (band, s); };
+
+    juce::StringArray upper;
+    for (auto& n : spaceTypeNames) upper.add (n.toUpperCase());
+    type = std::make_unique<st::Segmented> (P ("space_type"), um, upper);
+    type->setAccent (t.accent2);
+    type->setTooltip ("Reverb sound");
+    addAndMakeVisible (*type);
+
+    auto knob = [&] (std::unique_ptr<st::Knob>& k, const char* id, const char* label, const char* tip, bool ringed = false)
+    {
+        k = std::make_unique<st::Knob> (P (id), um, label);
+        k->setSize (st::Knob::Size::small);
+        k->setLook (ringed ? st::Knob::Look::ringed : st::Knob::Look::classic);
+        k->setColour (t.accent);
+        k->setTooltip (tip);
+        addAndMakeVisible (*k);
+    };
+    knob (amount, "space_mix", "Amount", "How much reverb is added to this band", true);
+    knob (decay, "space_decay", "Decay", "Reverb time (RT60)");
+    knob (size, "space_size", "Size", "Room size");
+    knob (predelay, "space_predelay", "Pre-delay", "Gap before the reverb starts");
+    knob (tone, "space_tone", "Tone", "Darker or brighter tail");
+    knob (width_, "space_width", "Width", "Stereo width of the reverb");
+    knob (comp, "space_comp", "Compress", "Compresses the reverb tail so it sits steadier");
+    knob (duck, "space_duck", "Duck", "Pulls the reverb down while the chosen source is playing");
+    knob (release, "space_duck_release", "Release", "How quickly the reverb comes back after ducking");
+
+    duckSource = std::make_unique<st::Dropdown> (P ("space_duck_src"), um);
+    duckSource->setGreyStyle (true);
+    duckSource->setTooltip ("What the reverb ducks against");
+    addAndMakeVisible (*duckSource);
+
+    closeButton.setMinimal (true);
+    closeButton.onClick = [this] { if (onClose) onClose(); };
+    addAndMakeVisible (closeButton);
+    setWantsKeyboardFocus (true);
+    startTimerHz (30);
+}
+
+bool SpacePopover::keyPressed (const juce::KeyPress& k)
+{
+    if (k == juce::KeyPress::escapeKey) { if (onClose) onClose(); return true; }
+    return false;
+}
+
+void SpacePopover::timerCallback()
+{
+    auto& bp = proc.getEngine().getBand (band);
+    const float d = bp.spaceDuckDb.load(), w = bp.spaceLevelDb.load();
+    if (std::abs (d - duckDb) > 0.05f || std::abs (w - wetDb) > 0.3f)
+    {
+        duckDb = d;
+        wetDb = w;
+        repaint (graph.toNearestInt().expanded (4));
+        repaint (dynArea.toNearestInt().expanded (4));
+    }
+}
+
+void SpacePopover::resized()
+{
+    auto r = getLocalBounds().reduced (margin).reduced (18, 14);
+    auto header = r.removeFromTop (24);
+    closeButton.setBounds (header.removeFromRight (22).withSizeKeepingCentre (22, 22).translated (4, 0));
+
+    r.removeFromTop (10);
+    type->setBounds (r.removeFromTop (26));
+    r.removeFromTop (14);
+
+    auto rowA = r.removeFromTop (88);
+    graph = rowA.removeFromRight (172).toFloat().reduced (0.0f, 6.0f);
+    rowA.removeFromRight (12);
+    const int kw = rowA.getWidth() / 6;
+    for (auto* k : { amount.get(), decay.get(), size.get(), predelay.get(), tone.get(), width_.get() })
+        k->setBounds (rowA.removeFromLeft (kw));
+
+    r.removeFromTop (34);
+    auto rowB = r;
+    dynArea = rowB.toFloat();
+    rowB.removeFromLeft (8);
+    comp->setBounds (rowB.removeFromLeft (kw));
+    rowB.removeFromLeft (28);
+    duck->setBounds (rowB.removeFromLeft (kw));
+    release->setBounds (rowB.removeFromLeft (kw));
+    rowB.removeFromLeft (16);
+    duckSource->setBounds (rowB.removeFromLeft (150).withSizeKeepingCentre (150, 26).translated (0, -8));
+}
+
+void SpacePopover::paint (juce::Graphics& g)
+{
+    const auto& t = st::Theme::get();
+    auto bg = getLocalBounds().toFloat().reduced ((float) margin);
+    st::paint::softShadow (g, bg, 9.0f, 14.0f, 0.6f);
+    g.setColour (juce::Colour (0xf41d181b));
+    g.fillRoundedRectangle (bg, 9.0f);
+    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.11f), 0.0f, bg.getY(),
+                                             juce::Colours::white.withAlpha (0.03f), 0.0f, bg.getY() + 60.0f, false));
+    g.drawRoundedRectangle (bg.reduced (0.5f), 9.0f, 1.0f);
+
+    auto title = juce::Rectangle<float> (bg.getX() + 18.0f, bg.getY() + 14.0f, 300.0f, 24.0f);
+    st::paint::caption (g, "Space", title, t.text.withAlpha (0.92f), juce::Justification::centredLeft, 11.5f);
+    g.setFont (st::fonts::medium (11.5f));
+    g.setColour (t.textFaint);
+    g.drawText ("Band " + juce::String (band + 1), title.withTrimmedLeft (54.0f), juce::Justification::centredLeft, false);
+
+    // Reverb envelope preview: pre-delay, build-up and decay, ducking shown as a dip.
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.32f));
+        g.fillRoundedRectangle (graph, 6.0f);
+
+        auto v = [this] (const char* s) { return proc.apvts.getRawParameterValue (ids::band (band, s))->load(); };
+        const float decaySec = v ("space_decay"), pre = v ("space_predelay") * 0.001f;
+        const float span = juce::jmax (0.6f, pre + decaySec * 1.1f);
+        const int typeIdx = (int) v ("space_type");
+        const float attack = typeIdx == 7 ? 0.35f * decaySec : (typeIdx == 2 ? 0.01f : 0.04f);   // bloom swells, plate is instant
+
+        auto area = graph.reduced (8.0f, 10.0f);
+        juce::Path env, fill;
+        fill.startNewSubPath (area.getX(), area.getBottom());
+        for (int i = 0; i <= 120; ++i)
+        {
+            const float tt = span * (float) i / 120.0f;
+            float a = 0.0f;
+            if (tt >= pre)
+            {
+                const float x = tt - pre;
+                const float build = juce::jmin (1.0f, x / juce::jmax (0.005f, attack));
+                const float dec = std::pow (10.0f, -3.0f * x / juce::jmax (0.05f, decaySec));   // -60 dB at RT60
+                a = build * std::sqrt (dec);
+            }
+            const float px = area.getX() + area.getWidth() * (float) i / 120.0f;
+            const float py = area.getBottom() - area.getHeight() * a;
+            if (i == 0) env.startNewSubPath (px, py); else env.lineTo (px, py);
+            fill.lineTo (px, py);
+        }
+        fill.lineTo (area.getRight(), area.getBottom());
+        fill.closeSubPath();
+
+        const bool on = v ("space_mix") > 0.05f;
+        g.setGradientFill (juce::ColourGradient (t.accent2.withAlpha (on ? 0.28f : 0.08f), 0.0f, area.getY(),
+                                                 t.accent2.withAlpha (0.0f), 0.0f, area.getBottom(), false));
+        g.fillPath (fill);
+        g.setColour (t.accent2.withAlpha (on ? 0.95f : 0.35f));
+        g.strokePath (env, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved));
+
+        g.setFont (st::fonts::medium (10.0f));
+        g.setColour (t.textFaint);
+        g.drawText (spaceTypeNames[juce::jlimit (0, spaceTypeNames.size() - 1, typeIdx)], graph.reduced (8.0f, 5.0f),
+                    juce::Justification::topRight, false);
+    }
+
+    // Dynamics group: caption + live duck meter
+    {
+        const auto capY = (float) comp->getY() - 2.0f;
+        st::paint::caption (g, "Reverb Dynamics", juce::Rectangle<float> ((float) comp->getX(), capY - 16.0f, 260.0f, 14.0f),
+                            t.textFaint, juce::Justification::centredLeft, 9.5f);
+
+        auto meter = juce::Rectangle<float> ((float) duckSource->getX(), (float) duckSource->getBottom() + 12.0f, (float) duckSource->getWidth(), 5.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillRoundedRectangle (meter, 2.5f);
+        const float amt = juce::jlimit (0.0f, 1.0f, -duckDb / 30.0f);
+        g.setColour (t.accent2);
+        g.fillRoundedRectangle (meter.withWidth (meter.getWidth() * amt), 2.5f);
+        g.setFont (st::fonts::medium (10.0f));
+        g.setColour (t.textFaint);
+        g.drawText ("Ducking " + st::params::formatDb (duckDb, 1), meter.translated (0.0f, 8.0f).withHeight (14.0f),
+                    juce::Justification::centredLeft, false);
+        st::paint::caption (g, "Duck from", juce::Rectangle<float> ((float) duckSource->getX(), (float) duckSource->getY() - 16.0f, 150.0f, 14.0f),
+                            t.textFaint, juce::Justification::centredLeft, 9.5f);
+
+        // soft divider between the shape and dynamics rows (fades at both ends)
+        const float y = (float) comp->getY() - 26.0f;
+        juce::ColourGradient div (juce::Colours::white.withAlpha (0.0f), bg.getX() + 18.0f, y, juce::Colours::white.withAlpha (0.0f), bg.getRight() - 18.0f, y, false);
+        div.addColour (0.5, juce::Colours::white.withAlpha (0.08f));
+        g.setGradientFill (div);
+        g.fillRect (bg.getX() + 18.0f, y, bg.getWidth() - 36.0f, 1.0f);
+    }
+}
+
+//==============================================================================
 FooterBar::FooterBar (StSatProcessor& p)
     : quality (p.param (ids::quality), &p.undoManager),
       slope (p.param (ids::slope), &p.undoManager),
@@ -421,13 +625,23 @@ void FooterBar::paint (juce::Graphics& g)
     bar.addRoundedRectangle (r.getX() + 6.0f, r.getY(), r.getWidth() - 12.0f, r.getHeight() + 20.0f, 18.0f, 18.0f, true, true, false, false);
     g.setColour (juce::Colours::black.withAlpha (0.42f));
     g.fillPath (bar);
-    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.08f), 0.0f, r.getY(),
-                                             juce::Colours::white.withAlpha (0.0f), 0.0f, r.getY() + 14.0f, false));
-    g.strokePath (bar, juce::PathStrokeType (1.0f));
+    {
+        // edge light that fades out towards both corners
+        juce::ColourGradient edge (juce::Colours::white.withAlpha (0.0f), r.getX(), 0.0f, juce::Colours::white.withAlpha (0.0f), r.getRight(), 0.0f, false);
+        edge.addColour (0.15, juce::Colours::white.withAlpha (0.09f));
+        edge.addColour (0.85, juce::Colours::white.withAlpha (0.09f));
+        g.setGradientFill (edge);
+        g.fillRect (r.getX() + 24.0f, r.getY(), r.getWidth() - 48.0f, 1.0f);
+    }
 
     g.setColour (juce::Colours::white.withAlpha (0.07f));
     for (float x : dividers)
-        g.fillRect (x, r.getY() + 9.0f, 1.0f, r.getHeight() - 18.0f);
+    {
+        juce::ColourGradient dg (juce::Colours::white.withAlpha (0.0f), x, r.getY() + 6.0f, juce::Colours::white.withAlpha (0.0f), x, r.getBottom() - 6.0f, false);
+        dg.addColour (0.5, juce::Colours::white.withAlpha (0.10f));
+        g.setGradientFill (dg);
+        g.fillRect (x, r.getY() + 6.0f, 1.0f, r.getHeight() - 12.0f);
+    }
 }
 
 void FooterBar::resized()

@@ -27,7 +27,9 @@ namespace ids
     inline const juce::StringArray bandSuffixes {
         "style", "drive", "drive_spread", "dyn", "dyn_up_thresh", "dyn_up_ratio", "dyn_down_thresh", "dyn_down_ratio",
         "dyn_attack", "dyn_release", "dyn_pos", "tone_low", "tone_lmid", "tone_hmid", "tone_high", "fb", "fb_freq", "mix", "level", "pan",
-        "chan", "mute", "solo", "bypass"
+        "chan", "mute", "solo", "bypass",
+        "space_type", "space_mix", "space_decay", "space_size", "space_predelay", "space_tone", "space_width",
+        "space_comp", "space_duck", "space_duck_src", "space_duck_release"
     };
 
     inline juce::String band (int b, const juce::String& suffix) { return "b" + juce::String (b + 1) + "_" + suffix; }
@@ -42,6 +44,11 @@ namespace defaults
     constexpr float toneFreq[4] = { 110.0f, 550.0f, 2600.0f, 7500.0f };
     constexpr float toneQ[4]    = { 0.71f, 0.9f, 0.9f, 0.71f };
 }
+
+/** Space (per-band reverb) */
+inline const juce::StringArray spaceTypeNames { "Room", "Chamber", "Plate", "Hall", "Cathedral", "Spring", "Ambience", "Bloom" };
+/** Ducking sources: 0 = this band, 1 = all bands, 2 = plugin input, 3.. = band 1..6 */
+juce::StringArray getDuckSourceNames();
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout (const st::mod::Config&);
 

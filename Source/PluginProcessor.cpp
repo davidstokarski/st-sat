@@ -46,6 +46,12 @@ StSatProcessor::StSatProcessor()
         bind (r.level, id ("level"));             bind (r.pan, id ("pan"));
         bind (r.chan, id ("chan"));               bind (r.mute, id ("mute"));
         bind (r.solo, id ("solo"));               bind (r.bypass, id ("bypass"));
+        bind (r.spType, id ("space_type"));       bind (r.spMix, id ("space_mix"));
+        bind (r.spDecay, id ("space_decay"));     bind (r.spSize, id ("space_size"));
+        bind (r.spPre, id ("space_predelay"));    bind (r.spTone, id ("space_tone"));
+        bind (r.spWidth, id ("space_width"));     bind (r.spComp, id ("space_comp"));
+        bind (r.spDuck, id ("space_duck"));       bind (r.spDuckSrc, id ("space_duck_src"));
+        bind (r.spDuckRel, id ("space_duck_release"));
     }
 
     engine.onBandSplit = [this] (int band, const juce::AudioBuffer<float>& b, int osN)
@@ -151,6 +157,17 @@ void StSatProcessor::updateEngineSettings() noexcept
         s.bypass = r.bypass.getBool();
         s.audible = (r.mute.getBool() || (anySolo && ! r.solo.getBool())) ? 0.0f : 1.0f;
         s.autoGain = ag;
+        s.space.type = r.spType.getInt();
+        s.space.mix = value (r.spMix) * 0.01f;
+        s.space.decaySeconds = value (r.spDecay);
+        s.space.size = value (r.spSize) * 0.01f;
+        s.space.predelayMs = value (r.spPre);
+        s.space.tone = value (r.spTone) * 0.01f;
+        s.space.width = value (r.spWidth) * 0.01f;
+        s.space.compression = value (r.spComp) * 0.01f;
+        s.space.duck = value (r.spDuck) * 0.01f;
+        s.space.duckSource = r.spDuckSrc.getInt();
+        s.space.duckReleaseMs = value (r.spDuckRel);
         engine.setBand (b, s);
     }
 }

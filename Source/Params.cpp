@@ -17,6 +17,14 @@ int getDefaultStyleIndex()
     return 0;
 }
 
+juce::StringArray getDuckSourceNames()
+{
+    juce::StringArray s { "This Band", "All Bands", "Input" };
+    for (int b = 0; b < kMaxBands; ++b)
+        s.add ("Band " + juce::String (b + 1));
+    return s;
+}
+
 st::mod::Config getModConfig()
 {
     st::mod::Config c;
@@ -91,6 +99,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout (const
         group->addChild (makeFloat (id ("level"), n + "Level", linear (-36.0f, 24.0f, 0.01f), 0.0f, dbAttributes()));
         group->addChild (makeFloat (id ("pan"), n + "Pan", linear (-100.0f, 100.0f, 0.01f), 0.0f, percentAttributes (true)));
         group->addChild (makeChoice (id ("chan"), n + "Channels", { "Stereo", "Mid", "Side", "Left", "Right" }, 0));
+
+        // Space: per-band reverb with compression and ducking
+        group->addChild (makeChoice (id ("space_type"), n + "Space Type", spaceTypeNames, 3));
+        group->addChild (makeFloat (id ("space_mix"), n + "Space Amount", linear (0.0f, 100.0f, 0.01f), 0.0f, percentAttributes()));
+        group->addChild (makeFloat (id ("space_decay"), n + "Space Decay", skewed (0.1f, 20.0f, 2.0f, 0.01f), 2.0f,
+                                    juce::AudioParameterFloatAttributes()
+                                        .withStringFromValueFunction ([] (float v, int) { return v < 1.0f ? juce::String (juce::roundToInt (v * 1000.0f)) + " ms" : juce::String (v, 2) + " s"; })
+                                        .withValueFromStringFunction ([] (const juce::String& s) { auto t = s.toLowerCase(); float v = t.retainCharacters (".0123456789").getFloatValue(); return t.contains ("ms") ? v * 0.001f : v; })));
+        group->addChild (makeFloat (id ("space_size"), n + "Space Size", linear (0.0f, 100.0f, 0.01f), 50.0f, percentAttributes()));
+        group->addChild (makeFloat (id ("space_predelay"), n + "Space Pre-delay", skewed (0.0f, 250.0f, 40.0f, 0.1f), 12.0f, msAttributes()));
+        group->addChild (makeFloat (id ("space_tone"), n + "Space Tone", linear (-100.0f, 100.0f, 0.01f), 0.0f, percentAttributes (true)));
+        group->addChild (makeFloat (id ("space_width"), n + "Space Width", linear (0.0f, 150.0f, 0.01f), 100.0f, percentAttributes()));
+        group->addChild (makeFloat (id ("space_comp"), n + "Space Compression", linear (0.0f, 100.0f, 0.01f), 0.0f, percentAttributes()));
+        group->addChild (makeFloat (id ("space_duck"), n + "Space Ducking", linear (0.0f, 100.0f, 0.01f), 0.0f, percentAttributes()));
+        group->addChild (makeChoice (id ("space_duck_src"), n + "Space Duck Source", getDuckSourceNames(), 0));
+        group->addChild (makeFloat (id ("space_duck_release"), n + "Space Duck Release", skewed (20.0f, 2000.0f, 250.0f, 0.1f), 250.0f, msAttributes()));
         group->addChild (makeBool (id ("mute"), n + "Mute", false));
         group->addChild (makeBool (id ("solo"), n + "Solo", false));
         group->addChild (makeBool (id ("bypass"), n + "Bypass", false));
@@ -112,7 +136,8 @@ juce::StringArray getModulatableParameterIds()
 
     for (int b = 0; b < kMaxBands; ++b)
         for (auto s : { "drive", "drive_spread", "dyn", "dyn_up_thresh", "dyn_up_ratio", "dyn_down_thresh", "dyn_down_ratio",
-                        "dyn_attack", "dyn_release", "tone_low", "tone_lmid", "tone_hmid", "tone_high", "fb", "fb_freq", "mix", "level", "pan" })
+                        "dyn_attack", "dyn_release", "tone_low", "tone_lmid", "tone_hmid", "tone_high", "fb", "fb_freq", "mix", "level", "pan",
+                        "space_mix", "space_decay", "space_size", "space_predelay", "space_tone", "space_width", "space_comp", "space_duck" })
             out.add (ids::band (b, s));
 
     return out;

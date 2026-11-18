@@ -74,12 +74,13 @@ void StSatEditor::selectBand (int b, bool animateChange, bool force)
         outgoingFade.snap (1.0f);
     }
 
-    const bool popoverWasOpen = dynPopover != nullptr;
-    dynPopover.reset();
+    const auto reopen = popoverKind;
+    closePopover();
 
     bandPanel = std::make_unique<FloatingBandPanel> (proc, b);
     bandPanel->setBufferedToImage (true);
-    bandPanel->onDynamicsDetail = [this] { toggleDynamicsPopover(); };
+    bandPanel->onDynamicsDetail = [this] { togglePopover (PopoverKind::dynamics); };
+    bandPanel->onSpaceDetail = [this] { togglePopover (PopoverKind::space); };
     bandPanel->onRemoveBand = [this]
     {
         const int band = selectedBand;
@@ -99,24 +100,42 @@ void StSatEditor::selectBand (int b, bool animateChange, bool force)
 
     bandPanel->setBounds (juce::roundToInt (panelX.current), panelY, FloatingBandPanel::width, FloatingBandPanel::height);
 
-    if (popoverWasOpen) toggleDynamicsPopover();
+    if (reopen != PopoverKind::none) togglePopover (reopen);
     if (modBinder != nullptr) modBinder->refresh();
     if (modTrails != nullptr) modTrails->refresh();
 }
 
-void StSatEditor::toggleDynamicsPopover()
+void StSatEditor::closePopover()
 {
-    if (dynPopover != nullptr)
+    popover.reset();
+    popoverKind = PopoverKind::none;
+}
+
+void StSatEditor::togglePopover (PopoverKind kind)
+{
+    const bool same = popoverKind == kind;
+    closePopover();
+    if (same || kind == PopoverKind::none) return;
+
+    auto onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<StSatEditor> (this)] { if (safe != nullptr) safe->closePopover(); }); };
+
+    if (kind == PopoverKind::dynamics)
     {
-        dynPopover.reset();
-        return;
+        auto p = std::make_unique<DynamicsPopover> (proc, selectedBand);
+        p->onClose = onClose;
+        popover = std::move (p);
+    }
+    else
+    {
+        auto p = std::make_unique<SpacePopover> (proc, selectedBand);
+        p->onClose = onClose;
+        popover = std::move (p);
     }
 
-    dynPopover = std::make_unique<DynamicsPopover> (proc, selectedBand);
-    dynPopover->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<StSatEditor> (this)] { if (safe != nullptr) safe->dynPopover.reset(); }); };
-    getContent().addAndMakeVisible (*dynPopover);
-    dynPopover->grabKeyboardFocus();
-    if (modTrails != nullptr) modTrails->refresh();
+    popoverKind = kind;
+    getContent().addAndMakeVisible (*popover);
+    if (modTrails != nullptr) modTrails->toFront (false);
+    popover->toFront (true);
     popoverFade.snap (0.0f);
     animate (0.0);
     if (modBinder != nullptr) modBinder->refresh();
@@ -149,16 +168,19 @@ void StSatEditor::animate (double dt)
         else outgoingPanel->setAlpha (outgoingFade.current);
     }
 
-    if (dynPopover != nullptr)
+    if (popover != nullptr)
     {
         popoverFade.setTarget (1.0f);
         popoverFade.tick (dt, 16.0f);
-        const auto anchor = bandPanel->getDynamicsAnchor() + bandPanel->getPosition();
-        const int m = DynamicsPopover::margin;
-        const int x = juce::jlimit (8 - m, designWidth - 8 + m - DynamicsPopover::width, anchor.x - DynamicsPopover::width / 2);
-        const int y = panelY - DynamicsPopover::height + m - 2 + juce::roundToInt ((1.0f - popoverFade.current) * 10.0f);
-        dynPopover->setBounds (x, y, DynamicsPopover::width, DynamicsPopover::height);
-        dynPopover->setAlpha (popoverFade.current);
+        const auto anchor = (popoverKind == PopoverKind::space ? bandPanel->getSpaceAnchor() : bandPanel->getDynamicsAnchor())
+                            + bandPanel->getPosition();
+        const int m = DynamicsPopover::margin;   // both popovers share the same shadow margin
+        const int w = popover->getWidth() > 0 ? popover->getWidth() : (popoverKind == PopoverKind::space ? SpacePopover::width : DynamicsPopover::width);
+        const int h = popoverKind == PopoverKind::space ? SpacePopover::height : DynamicsPopover::height;
+        const int x = juce::jlimit (8 - m, designWidth - 8 + m - w, anchor.x - w / 2);
+        const int y = panelY - h + m - 2 + juce::roundToInt ((1.0f - popoverFade.current) * 10.0f);
+        popover->setBounds (x, y, popoverKind == PopoverKind::space ? SpacePopover::width : DynamicsPopover::width, h);
+        popover->setAlpha (popoverFade.current);
     }
 }
 

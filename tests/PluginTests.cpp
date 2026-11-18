@@ -116,6 +116,11 @@ static int runTests()
                 setParam (p, stsat::ids::band (b, "dyn"), (b % 2 ? 80.0f : -50.0f));
                 setParam (p, stsat::ids::band (b, "fb"), 70.0f);
                 setParam (p, stsat::ids::band (b, "chan"), (float) (b % 5));
+                setParam (p, stsat::ids::band (b, "space_mix"), 40.0f);
+                setParam (p, stsat::ids::band (b, "space_type"), (float) ((b + q) % 8));
+                setParam (p, stsat::ids::band (b, "space_duck"), 50.0f);
+                setParam (p, stsat::ids::band (b, "space_duck_src"), (float) (b % 9));
+                setParam (p, stsat::ids::band (b, "space_comp"), 40.0f);
             }
             const float peak = runNoise (p, 20, 512, finite);
             check (peak < 16.0f, "peak bounded q=" + juce::String (q) + " nb=" + juce::String (nb) + " peak=" + juce::String (peak));
@@ -233,6 +238,21 @@ struct SnapshotApp : juce::JUCEApplicationBase
         {
             if (auto* panel = dynamic_cast<stsat::FloatingBandPanel*> (find (ed, [] (juce::Component& c) { return dynamic_cast<stsat::FloatingBandPanel*> (&c) != nullptr; })))
                 if (panel->onDynamicsDetail) panel->onDynamicsDetail();
+        } });
+
+        snap->jobs.push_back ({ [&p]
+        {
+            p.presets.loadPreset (0);
+            auto set = [&p] (const char* id, float v) { auto& prm = p.bandParam (0, id); prm.setValueNotifyingHost (prm.convertTo0to1 (v)); };
+            set ("space_mix", 35.0f);
+            set ("space_type", 2.0f);
+            set ("space_decay", 3.2f);
+            set ("space_duck", 60.0f);
+            set ("space_comp", 30.0f);
+        }, "07_space_popover", 1.0f, [find] (juce::Component& ed)
+        {
+            if (auto* panel = dynamic_cast<stsat::FloatingBandPanel*> (find (ed, [] (juce::Component& c) { return dynamic_cast<stsat::FloatingBandPanel*> (&c) != nullptr; })))
+                if (panel->onSpaceDetail) panel->onSpaceDetail();
         } });
 
         snap->jobs.push_back ({ [&p]

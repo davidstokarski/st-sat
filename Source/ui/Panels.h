@@ -31,10 +31,12 @@ public:
     FloatingBandPanel (StSatProcessor&, int band);
 
     int getBand() const noexcept { return band; }
-    static constexpr int width = 660, height = 136;
+    static constexpr int width = 736, height = 136;
 
     /** Called when the user clicks the Dynamics caption (to open the detail popover). */
     std::function<void()> onDynamicsDetail;
+    std::function<void()> onSpaceDetail;
+    juce::Point<int> getSpaceAnchor() const;
     std::function<void()> onRemoveBand;
     juce::Point<int> getDynamicsAnchor() const;   // local, top-centre of the dynamics knob
 
@@ -51,6 +53,8 @@ private:
     std::unique_ptr<st::Knob> mix, feedback, fbFreq, dynamics, drive, level;
     std::array<std::unique_ptr<st::Fader>, 4> tone;
     st::FlatButton dynDetail { "", "Upward / downward dynamics detail" };
+    std::unique_ptr<st::Knob> space;
+    st::FlatButton spaceDetail { "", "Space: reverb sound, compression and ducking" };
 
     juce::Rectangle<float> box;
     juce::Rectangle<int> toneArea;
@@ -83,6 +87,37 @@ private:
     st::IconButton closeButton { st::icons::Icon::close, "Close" };
     juce::Rectangle<float> graph;
     float liveIn = -100.0f, liveGain = 0.0f;
+
+    void timerCallback() override;
+};
+
+//==============================================================================
+/** Per-band Space (reverb) editor: sound, shape, compression and ducking. */
+class SpacePopover : public juce::Component, private juce::Timer
+{
+public:
+    SpacePopover (StSatProcessor&, int band);
+    ~SpacePopover() override { stopTimer(); }
+
+    static constexpr int panelWidth = 660, panelHeight = 292, margin = 22;
+    static constexpr int width = panelWidth + 2 * margin, height = panelHeight + 2 * margin;
+    int getBand() const noexcept { return band; }
+    std::function<void()> onClose;
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
+    bool hitTest (int x, int y) override { return getLocalBounds().reduced (margin).contains (x, y); }
+
+private:
+    StSatProcessor& proc;
+    const int band;
+    std::unique_ptr<st::Segmented> type;
+    std::unique_ptr<st::Knob> amount, decay, size, predelay, tone, width_, comp, duck, release;
+    std::unique_ptr<st::Dropdown> duckSource;
+    st::IconButton closeButton { st::icons::Icon::close, "Close" };
+    juce::Rectangle<float> graph, dynArea;
+    float duckDb = 0.0f, wetDb = -100.0f;
 
     void timerCallback() override;
 };

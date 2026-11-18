@@ -17,7 +17,9 @@ private:
 
     stsat::MultibandDisplay display;
     std::unique_ptr<stsat::FloatingBandPanel> bandPanel, outgoingPanel;
-    std::unique_ptr<stsat::DynamicsPopover> dynPopover;
+    std::unique_ptr<juce::Component> popover;
+    enum class PopoverKind { none, dynamics, space };
+    PopoverKind popoverKind = PopoverKind::none;
     std::unique_ptr<st::ModulationStrip> modStrip;
     std::unique_ptr<st::ModulationBinder> modBinder;
     std::unique_ptr<st::ModulationTrails> modTrails;
@@ -29,7 +31,8 @@ private:
     void layout (juce::Rectangle<int> body) override;
 
     void selectBand (int b, bool animate = true, bool force = false);
-    void toggleDynamicsPopover();
+    void togglePopover (PopoverKind);
+    void closePopover();
     void animate (double dt);
     float targetPanelX() const;
 

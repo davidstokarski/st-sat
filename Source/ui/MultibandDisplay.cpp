@@ -223,15 +223,22 @@ void MultibandDisplay::drawColumns (juce::Graphics& g)
         g.setGradientFill (grad);
         g.fillRect (col);
 
-        // Soft edges so the column blends into neighbours
+        // Inner glow along the column edges (brighter at the top, fading downwards)
         for (int side = 0; side < 2; ++side)
         {
-            const float x = side == 0 ? col.getX() : col.getRight();
-            juce::ColourGradient edge (juce::Colours::white.withAlpha (0.05f * sel), x, plot.getY(),
-                                       juce::Colours::white.withAlpha (0.0f), x, plot.getBottom() * 0.8f, false);
+            if ((side == 0 && b == 0) || (side == 1 && b == nb - 1)) continue;
+            const float x = side == 0 ? col.getX() : col.getRight() - 14.0f;
+            juce::ColourGradient edge (t.displayGlow.withAlpha (side == 0 ? 0.20f * sel : 0.0f), x, 0.0f,
+                                       t.displayGlow.withAlpha (side == 0 ? 0.0f : 0.20f * sel), x + 14.0f, 0.0f, false);
             g.setGradientFill (edge);
-            g.fillRect (x - 0.5f, plot.getY(), 1.0f, plot.getHeight());
+            g.fillRect (x, plot.getY(), 14.0f, plot.getHeight() * 0.7f);
         }
+
+        // Fine highlight across the very top of the column
+        juce::ColourGradient topLine (juce::Colours::white.withAlpha (0.0f), col.getX(), 0.0f, juce::Colours::white.withAlpha (0.0f), col.getRight(), 0.0f, false);
+        topLine.addColour (0.5, juce::Colours::white.withAlpha (0.10f * sel));
+        g.setGradientFill (topLine);
+        g.fillRect (col.getX(), plot.getY(), col.getWidth(), 1.0f);
     }
 }
 
@@ -281,8 +288,15 @@ void MultibandDisplay::drawCrossovers (juce::Graphics& g)
         juce::Path dashed;
         const float dashes[] = { 4.0f, 4.0f };
         juce::PathStrokeType (1.0f).createDashedStroke (dashed, line, dashes, 2);
-        g.setColour (juce::Colours::white.withAlpha (0.30f + 0.35f * a));
-        g.fillPath (dashed);
+        {
+            const float top = plot.getY() + 46.0f, bottom = handleBottom + 18.0f;
+            const float alpha = 0.34f + 0.4f * a;
+            juce::ColourGradient fade (juce::Colours::white.withAlpha (0.0f), x, top, juce::Colours::white.withAlpha (0.0f), x, bottom, false);
+            fade.addColour (0.12, juce::Colours::white.withAlpha (alpha));
+            fade.addColour (0.75, juce::Colours::white.withAlpha (alpha));
+            g.setGradientFill (fade);
+            g.fillPath (dashed);
+        }
 
         // grip button with a little "tent" glyph
         g.setColour (juce::Colours::black.withAlpha (0.45f));
@@ -332,8 +346,16 @@ void MultibandDisplay::drawHandles (juce::Graphics& g)
         const bool muted = proc.apvts.getRawParameterValue (ids::band (b, "mute"))->load() > 0.5f;
 
         // Level line across the band
-        g.setColour (juce::Colours::white.withAlpha ((bypassed || muted ? 0.08f : 0.16f) + 0.18f * sel + 0.08f * hov));
-        g.fillRect (xr.getStart() + 1.0f, y - 0.5f, xr.getLength() - 2.0f, 1.0f);
+        {
+            const float a = (bypassed || muted ? 0.10f : 0.22f) + 0.22f * sel + 0.10f * hov;
+            const bool openLeft = b == 0, openRight = b == nb - 1;   // outer bands fade into the window edge
+            juce::ColourGradient line (juce::Colours::white.withAlpha (openLeft ? 0.0f : a * 0.25f), xr.getStart(), y,
+                                       juce::Colours::white.withAlpha (openRight ? 0.0f : a * 0.25f), xr.getEnd(), y, false);
+            line.addColour (0.18, juce::Colours::white.withAlpha (a));
+            line.addColour (0.82, juce::Colours::white.withAlpha (a));
+            g.setGradientFill (line);
+            g.fillRect (xr.getStart() + 1.0f, y - 0.5f, xr.getLength() - 2.0f, 1.0f);
+        }
 
         // Tint below the line in the selected band (subtle lift)
         if (sel > 0.01f)

@@ -35,6 +35,14 @@ void BandProcessor::prepare (double rate, int maxBlock, int channels, int factor
     audibleGain.setCurrentAndTarget (settings.audible);
 
     levelCoeff = (float) std::exp (-1.0 / (fs * 0.08));
+
+    reverb.prepare (fs, juce::jmax (1, factor), maxBlock);
+    spaceComp.prepare (fs, maxBlock, 2);
+    spaceWet.setSize (2, maxBlock, false, false, true);
+    spaceMix.prepare (fs, 30.0);
+    duckGain.prepare (fs, 8.0);
+    spaceMix.setCurrentAndTarget (0.0f);
+    duckGain.setCurrentAndTarget (1.0f);
     reset();
 }
 
@@ -51,6 +59,10 @@ void BandProcessor::reset()
     dynamics.reset();
     feedbackState.fill (0.0f);
     levelFollower = 0.0f;
+    reverb.reset();
+    spaceComp.reset();
+    duckEnv = 0.0f;
+    spaceRunning = false;
 }
 
 void BandProcessor::setSettings (const BandSettings& s) noexcept
@@ -88,6 +100,30 @@ void BandProcessor::setSettings (const BandSettings& s) noexcept
     dp.stereoLink = 1.0f;
     dp.rmsBlend = 0.5f;
     dynamics.setParams (dp);
+
+    {
+        st::dsp::Reverb::Params rp;
+        rp.type = (st::dsp::Reverb::Type) juce::jlimit (0, 7, s.space.type);
+        rp.decaySeconds = s.space.decaySeconds;
+        rp.size = s.space.size;
+        rp.predelayMs = s.space.predelayMs;
+        rp.tone = s.space.tone;
+        rp.width = s.space.width;
+        rp.modulation = 0.35f;
+        reverb.setParams (rp);
+
+        st::dsp::UpDownCompressor::Params cp;
+        const float k = s.space.compression;
+        cp.depth = k > 0.0005f ? 1.0f : 0.0f;
+        cp.downThresholdDb = -10.0f - 26.0f * k;
+        cp.downRatio = 1.0f + 9.0f * k;
+        cp.upThresholdDb = -120.0f;
+        cp.upRatio = 1.0f;
+        cp.attackMs = 6.0f;
+        cp.releaseMs = 140.0f;
+        cp.kneeDb = 8.0f;
+        spaceComp.setParams (cp);
+    }
 
     if (s.channels != lastChannelMode)
     {
@@ -259,6 +295,72 @@ void BandProcessor::process (juce::AudioBuffer<float>& band, int n) noexcept
     outputLevelDb.store (juce::Decibels::gainToDecibels (levelFollower, -100.0f), std::memory_order_relaxed);
 }
 
+void BandProcessor::processSpace (juce::AudioBuffer<float>& band, int n, float duckSourcePeak) noexcept
+{
+    const auto& sp = settings.space;
+    const bool wanted = sp.mix > 0.0005f;
+
+    if (! wanted && ! spaceRunning)
+    {
+        spaceLevelDb.store (-100.0f, std::memory_order_relaxed);
+        spaceDuckDb.store (0.0f, std::memory_order_relaxed);
+        return;
+    }
+
+    if (wanted && ! spaceRunning)
+    {
+        reverb.reset();
+        spaceComp.reset();
+        spaceMix.setCurrentAndTarget (0.0f);
+    }
+    spaceRunning = true;
+    spaceMix.setTarget (wanted ? sp.mix : 0.0f);
+
+    const int channels = juce::jmin (2, band.getNumChannels());
+    const float* inL = band.getReadPointer (0);
+    const float* inR = channels > 1 ? band.getReadPointer (1) : inL;
+    float* wl = spaceWet.getWritePointer (0);
+    float* wr = spaceWet.getWritePointer (1);
+    reverb.process (inL, inR, wl, wr, n);
+
+    if (sp.compression > 0.0005f)
+    {
+        juce::AudioBuffer<float> view (spaceWet.getArrayOfWritePointers(), 2, n);
+        spaceComp.process (view, n);
+    }
+
+    // Ducking: follow the chosen source (instant attack, adjustable release) and pull the wet down.
+    const float blockSeconds = (float) ((double) n / fs);
+    const float rel = std::exp (-blockSeconds / juce::jmax (0.01f, sp.duckReleaseMs * 0.001f));
+    duckEnv = duckSourcePeak > duckEnv ? duckSourcePeak : duckEnv * rel;
+    duckEnv = st::dsp::flushDenormal (duckEnv);
+    const float envDb = juce::Decibels::gainToDecibels (duckEnv, -100.0f);
+    const float reductionDb = sp.duck * 30.0f * juce::jlimit (0.0f, 1.0f, (envDb + 48.0f) / 42.0f);
+    duckGain.setTarget (juce::Decibels::decibelsToGain (-reductionDb));
+
+    // The wet follows the band's mute / solo / bypass state.
+    const float audible = audibleGain.getCurrent() * bypassMix.getCurrent();
+    float* outL = band.getWritePointer (0);
+    float* outR = channels > 1 ? band.getWritePointer (1) : nullptr;
+    float peak = 0.0f;
+
+    for (int i = 0; i < n; ++i)
+    {
+        const float gn = spaceMix.getNext() * duckGain.getNext() * audible;
+        const float l = wl[i] * gn, r = wr[i] * gn;
+        if (outR != nullptr) { outL[i] += l; outR[i] += r; }
+        else outL[i] += 0.5f * (l + r);
+        peak = juce::jmax (peak, std::abs (l), std::abs (r));
+    }
+
+    spaceLevel = juce::jmax (peak, spaceLevel * 0.97f);
+    spaceLevelDb.store (juce::Decibels::gainToDecibels (spaceLevel, -100.0f), std::memory_order_relaxed);
+    spaceDuckDb.store (-reductionDb, std::memory_order_relaxed);
+
+    if (! wanted && ! spaceMix.isSmoothing() && spaceMix.getCurrent() <= 0.0f)
+        spaceRunning = false;
+}
+
 //==============================================================================
 void Engine::prepare (double sampleRate, int maxBlockSize, int channels)
 {
@@ -381,17 +483,41 @@ void Engine::process (juce::AudioBuffer<float>& buffer, int n) noexcept
         osInput.copyFrom (c, 0, up.getChannelPointer ((size_t) c), osN);
 
     juce::AudioBuffer<float> osView (osInput.getArrayOfWritePointers(), channels, osN);
+    float inputPeak = 0.0f;
+    for (int c = 0; c < channels; ++c)
+        inputPeak = juce::jmax (inputPeak, osView.getMagnitude (c, 0, osN));
+
     crossover.process (osView, bandBuffers.data(), osN);
 
     // Process bands and sum into the up-sampled block.
     up.clear();
     const int active = juce::jlimit (1, kMaxBands, global.numBands);
 
+    std::array<float, kMaxBands> bandPeak {};
+    float allPeak = 0.0f;
+
     for (int b = 0; b < active; ++b)
     {
         juce::AudioBuffer<float> bandView (bandBuffers[(size_t) b].getArrayOfWritePointers(), channels, osN);
         if (onBandSplit) onBandSplit (b, bandView, osN);
         bands[(size_t) b].process (bandView, osN);
+
+        for (int c = 0; c < channels; ++c)
+            bandPeak[(size_t) b] = juce::jmax (bandPeak[(size_t) b], bandView.getMagnitude (c, 0, osN));
+        allPeak = juce::jmax (allPeak, bandPeak[(size_t) b]);
+    }
+
+    // Space (per-band reverb) + ducking, then sum.
+    for (int b = 0; b < active; ++b)
+    {
+        juce::AudioBuffer<float> bandView (bandBuffers[(size_t) b].getArrayOfWritePointers(), channels, osN);
+        const int src = bands[(size_t) b].getSettings().space.duckSource;
+        float duckLevel = bandPeak[(size_t) b];
+        if (src == 1) duckLevel = allPeak;
+        else if (src == 2) duckLevel = inputPeak;
+        else if (src >= 3) duckLevel = (src - 3) < active ? bandPeak[(size_t) (src - 3)] : 0.0f;
+
+        bands[(size_t) b].processSpace (bandView, osN, duckLevel);
 
         for (int c = 0; c < channels; ++c)
             juce::FloatVectorOperations::add (up.getChannelPointer ((size_t) c), bandView.getReadPointer (c), osN);
