@@ -26,7 +26,7 @@ namespace ids
     // Per-band parameter suffixes. Full ID: "b<n>_<suffix>", n = 1..6
     inline const juce::StringArray bandSuffixes {
         "style", "drive", "dyn", "dyn_up_thresh", "dyn_up_ratio", "dyn_down_thresh", "dyn_down_ratio",
-        "dyn_attack", "dyn_release", "dyn_pos", "tone", "fb", "fb_freq", "mix", "level", "pan",
+        "dyn_attack", "dyn_release", "dyn_pos", "tone_low", "tone_lmid", "tone_hmid", "tone_high", "fb", "fb_freq", "mix", "level", "pan",
         "chan", "mute", "solo", "bypass"
     };
 
@@ -38,6 +38,9 @@ namespace defaults
 {
     constexpr float crossovers[kMaxCrossovers] = { 120.0f, 700.0f, 2500.0f, 6000.0f, 12000.0f };
     constexpr float drive = 6.0f;
+    // Tone EQ bands: frequency (Hz) and Q
+    constexpr float toneFreq[4] = { 110.0f, 550.0f, 2600.0f, 7500.0f };
+    constexpr float toneQ[4]    = { 0.71f, 0.9f, 0.9f, 0.71f };
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout (const st::mod::Config&);

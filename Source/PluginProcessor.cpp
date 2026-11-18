@@ -38,7 +38,9 @@ StSatProcessor::StSatProcessor()
         bind (r.upR, id ("dyn_up_ratio"));        bind (r.downT, id ("dyn_down_thresh"));
         bind (r.downR, id ("dyn_down_ratio"));    bind (r.attack, id ("dyn_attack"));
         bind (r.release, id ("dyn_release"));     bind (r.dynPos, id ("dyn_pos"));
-        bind (r.tone, id ("tone"));               bind (r.fb, id ("fb"));
+        bind (r.toneLow, id ("tone_low"));        bind (r.toneLmid, id ("tone_lmid"));
+        bind (r.toneHmid, id ("tone_hmid"));      bind (r.toneHigh, id ("tone_high"));
+        bind (r.fb, id ("fb"));
         bind (r.fbFreq, id ("fb_freq"));          bind (r.mix, id ("mix"));
         bind (r.level, id ("level"));             bind (r.pan, id ("pan"));
         bind (r.chan, id ("chan"));               bind (r.mute, id ("mute"));
@@ -137,7 +139,7 @@ void StSatProcessor::updateEngineSettings() noexcept
         s.attackMs = value (r.attack);
         s.releaseMs = value (r.release);
         s.dynPosition = r.dynPos.getInt() == 0 ? DynamicsPosition::pre : DynamicsPosition::post;
-        s.tone = value (r.tone) * 0.01f;
+        s.toneDb = { value (r.toneLow), value (r.toneLmid), value (r.toneHmid), value (r.toneHigh) };
         s.feedback = value (r.fb) * 0.01f;
         s.feedbackHz = value (r.fbFreq);
         s.mix = value (r.mix) * 0.01f;

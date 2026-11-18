@@ -207,7 +207,7 @@ struct SnapshotApp : juce::JUCEApplicationBase
         {
             load ("Up & Down Multiband");
             p.modMatrix.addRouting (st::mod::SourceId::lfo (0), stsat::ids::band (0, "drive"), 0.3f);
-            p.modMatrix.addRouting (st::mod::SourceId::lfo (0), stsat::ids::band (0, "tone"), -0.4f);
+            p.modMatrix.addRouting (st::mod::SourceId::lfo (0), stsat::ids::band (0, "tone_high"), -0.4f);
             p.uiState.setProperty ("selectedBand", 0, nullptr);
             p.uiState.setProperty ("dynExpanded", true, nullptr);
         }, "03_updown_mod" });

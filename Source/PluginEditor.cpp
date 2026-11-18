@@ -6,17 +6,16 @@ StSatEditor::StSatEditor (StSatProcessor& p)
     : EditorBase (p, designWidth, designHeight),
       proc (p),
       display (p),
-      modPanel (p.modMatrix),
       footer (p)
 {
     header.setProductName ("Sat");
 
     auto& content = getContent();
     content.addAndMakeVisible (display);
-    content.addAndMakeVisible (modPanel);
     content.addAndMakeVisible (footer);
-    modPanel.setBorderless (true);
+    header.toFront (false);
 
+    display.setHandleRange (118.0f, (float) panelY - 22.0f);
     display.onBandSelected = [this] (int b) { selectBand (b); };
     display.onFrame = [this] (double dt) { animate (dt); };
 
@@ -27,13 +26,15 @@ StSatEditor::StSatEditor (StSatProcessor& p)
     };
     footer.setAnalyzerMode ((int) proc.uiState.getProperty ("analyzer", 1));
 
-    expanded = (bool) proc.uiState.getProperty ("dynExpanded", false);
-    panelWidth.snap ((float) (expanded ? FloatingBandPanel::expandedWidth : FloatingBandPanel::collapsedWidth));
     panelFade.snap (1.0f);
-
     selectBand (juce::jlimit (0, proc.getNumBands() - 1, (int) proc.uiState.getProperty ("selectedBand", 0)), false);
 
-    modBinder = std::make_unique<st::ModulationBinder> (proc.modMatrix, getContent(), &modPanel);
+    modStrip = std::make_unique<st::ModulationStrip> (proc.modMatrix);
+    getContent().addAndMakeVisible (*modStrip);
+    modBinder = std::make_unique<st::ModulationBinder> (proc.modMatrix, getContent());
+    modBinder->attachStrip (modStrip.get());
+    modTrails = std::make_unique<st::ModulationTrails> (proc.modMatrix, *modStrip, getContent());
+    header.toFront (false);
     proc.param (ids::numBands).addListener (this);
     relayout();
 }
@@ -42,27 +43,28 @@ StSatEditor::~StSatEditor()
 {
     proc.param (ids::numBands).removeListener (this);
     cancelPendingUpdate();
+    modTrails.reset();
     modBinder.reset();
+    modStrip.reset();
 }
 
 void StSatEditor::handleAsyncUpdate()
 {
     const int nb = proc.getNumBands();
-    if (selectedBand >= nb)
-        selectBand (nb - 1);
+    // Band count changed: rebuild the panel (its remove button depends on the count).
+    selectBand (juce::jmin (selectedBand, nb - 1), true, true);
 }
 
-void StSatEditor::selectBand (int b, bool animateChange)
+void StSatEditor::selectBand (int b, bool animateChange, bool force)
 {
     b = juce::jlimit (0, juce::jmax (0, proc.getNumBands() - 1), b);
     selectedBand = b;
     proc.uiState.setProperty ("selectedBand", b, nullptr);
     display.setSelectedBand (b);
 
-    if (bandPanel != nullptr && bandPanel->getBand() == b)
+    if (! force && bandPanel != nullptr && bandPanel->getBand() == b)
         return;
 
-    // Cross-fade: the old panel fades out in place while the new one glides to its band.
     if (animateChange && bandPanel != nullptr)
     {
         outgoingPanel = std::move (bandPanel);
@@ -70,101 +72,97 @@ void StSatEditor::selectBand (int b, bool animateChange)
         outgoingFade.snap (1.0f);
     }
 
+    const bool popoverWasOpen = dynPopover != nullptr;
+    dynPopover.reset();
+
     bandPanel = std::make_unique<FloatingBandPanel> (proc, b);
-    bandPanel->setExpanded (expanded);
-    bandPanel->onExpandedChanged = [this] (bool e)
+    bandPanel->onDynamicsDetail = [this] { toggleDynamicsPopover(); };
+    bandPanel->onRemoveBand = [this]
     {
-        expanded = e;
-        proc.uiState.setProperty ("dynExpanded", e, nullptr);
+        const int band = selectedBand;
+        juce::MessageManager::callAsync ([this, band] { proc.removeBand (band); });
     };
     getContent().addAndMakeVisible (*bandPanel);
-    bandPanel->setBounds (0, 0, FloatingBandPanel::expandedWidth, FloatingBandPanel::height);
+    header.toFront (false);
+    if (modTrails != nullptr) modTrails->toFront (false);
 
     if (animateChange && outgoingPanel != nullptr)
-    {
         panelFade.snap (0.0f);
-        // Keep the new panel's start position at the old one so it slides across.
-    }
     else
     {
         panelX.snap (targetPanelX());
         panelFade.snap (1.0f);
     }
 
+    bandPanel->setBounds (juce::roundToInt (panelX.current), panelY, FloatingBandPanel::width, FloatingBandPanel::height);
+
+    if (popoverWasOpen) toggleDynamicsPopover();
     if (modBinder != nullptr) modBinder->refresh();
-    if (! displayArea.isEmpty()) animate (0.0);
+    if (modTrails != nullptr) modTrails->refresh();
+}
+
+void StSatEditor::toggleDynamicsPopover()
+{
+    if (dynPopover != nullptr)
+    {
+        dynPopover.reset();
+        return;
+    }
+
+    dynPopover = std::make_unique<DynamicsPopover> (proc, selectedBand);
+    getContent().addAndMakeVisible (*dynPopover);
+    if (modTrails != nullptr) modTrails->refresh();
+    popoverFade.snap (0.0f);
+    animate (0.0);
+    if (modBinder != nullptr) modBinder->refresh();
 }
 
 float StSatEditor::targetPanelX() const
 {
-    const float w = panelWidth.target;
-    const float centre = (float) displayArea.getX() + display.getBandCentreX (selectedBand);
-    const float minX = (float) displayArea.getX() + 14.0f;
-    const float maxX = (float) displayArea.getRight() - 14.0f - w;
-    return juce::jlimit (minX, juce::jmax (minX, maxX), centre - w * 0.5f);
-}
-
-void StSatEditor::placePanel (FloatingBandPanel& p, float x, float width, float fade)
-{
-    const int y = displayArea.getBottom() - FloatingBandPanel::height - 12;
-    p.setBounds (juce::roundToInt (x), y + juce::roundToInt ((1.0f - fade) * 10.0f), juce::roundToInt (width), FloatingBandPanel::height);
-    p.setAlpha (juce::jlimit (0.0f, 1.0f, fade));
+    const float w = (float) FloatingBandPanel::width;
+    const float centre = display.getBandCentreX (selectedBand);
+    return juce::jlimit (8.0f, (float) designWidth - 8.0f - w, centre - w * 0.5f);
 }
 
 void StSatEditor::animate (double dt)
 {
-    if (bandPanel == nullptr || displayArea.isEmpty()) return;
+    if (bandPanel == nullptr) return;
 
-    panelWidth.setTarget ((float) (expanded ? FloatingBandPanel::expandedWidth : FloatingBandPanel::collapsedWidth));
-    panelWidth.tick (dt, 14.0f);
     panelX.setTarget (targetPanelX());
-    panelX.tick (dt, 12.0f);
+    panelX.tick (dt, 11.0f);
     panelFade.setTarget (1.0f);
     panelFade.tick (dt, 14.0f);
 
-    placePanel (*bandPanel, panelX.current, panelWidth.current, panelFade.current);
+    bandPanel->setBounds (juce::roundToInt (panelX.current), panelY + juce::roundToInt ((1.0f - panelFade.current) * 8.0f),
+                          FloatingBandPanel::width, FloatingBandPanel::height);
+    bandPanel->setAlpha (panelFade.current);
 
     if (outgoingPanel != nullptr)
     {
         outgoingFade.setTarget (0.0f);
-        if (! outgoingFade.tick (dt, 18.0f) || outgoingFade.current < 0.02f)
-            outgoingPanel.reset();
-        else
-            outgoingPanel->setAlpha (outgoingFade.current);
+        if (! outgoingFade.tick (dt, 18.0f) || outgoingFade.current < 0.02f) outgoingPanel.reset();
+        else outgoingPanel->setAlpha (outgoingFade.current);
     }
 
-    display.setPanelArea (bandPanel->getBounds().toFloat().translated ((float) -displayArea.getX(), (float) -displayArea.getY())
-                                                .withWidth ((float) displayArea.getWidth()).withX (0.0f));
-}
-
-void StSatEditor::layout (juce::Rectangle<int> body)
-{
-    auto r = body;
-    footer.setBounds (r.removeFromBottom (44));
-    auto modArea = r.removeFromBottom (st::ModulationPanel::preferredHeight);
-    modPanel.setBounds (modArea.reduced (14, 0));
-    displayArea = r;
-    display.setBounds (displayArea);
-
-    if (bandPanel != nullptr)
+    if (dynPopover != nullptr)
     {
-        panelX.snap (targetPanelX());
-        placePanel (*bandPanel, panelX.current, panelWidth.current, panelFade.current);
+        popoverFade.setTarget (1.0f);
+        popoverFade.tick (dt, 16.0f);
+        const auto anchor = bandPanel->getDynamicsAnchor() + bandPanel->getPosition();
+        const int x = juce::jlimit (8, designWidth - 8 - DynamicsPopover::width, anchor.x - DynamicsPopover::width / 2);
+        const int y = panelY - DynamicsPopover::height - 2 + juce::roundToInt ((1.0f - popoverFade.current) * 10.0f);
+        dynPopover->setBounds (x, y, DynamicsPopover::width, DynamicsPopover::height);
+        dynPopover->setAlpha (popoverFade.current);
     }
 }
 
-void StSatEditor::paintBackground (juce::Graphics& g, juce::Rectangle<int> area)
+void StSatEditor::layout (juce::Rectangle<int>)
 {
-    EditorBase::paintBackground (g, area);
-
-    // A soft, coloured ambient glow under the selected band (follows the panel).
-    if (bandPanel != nullptr && ! displayArea.isEmpty())
-    {
-        const auto c = st::Theme::get().seriesColour (selectedBand);
-        const float cx = panelX.current + panelWidth.current * 0.5f;
-        const float cy = (float) displayArea.getBottom();
-        juce::ColourGradient glow (c.withAlpha (0.07f), cx, cy, c.withAlpha (0.0f), cx + 420.0f, cy, true);
-        g.setGradientFill (glow);
-        g.fillRect (area.toFloat());
-    }
+    auto all = getContent().getLocalBounds();
+    display.setBounds (all.withHeight (displayHeight));
+    footer.setBounds (all.removeFromBottom (footerHeight));
+    if (modStrip != nullptr)
+        modStrip->setBounds (0, modStripY, designWidth, st::ModulationStrip::preferredHeight);
+    panelX.snap (targetPanelX());
+    animate (0.0);
 }

@@ -40,6 +40,13 @@ namespace
             return band (b, "mix", mix);
         }
 
+        /** Old-style tilt (-100..100) mapped onto the low/high shelves of the tone EQ. */
+        P& tilt (int b, float amount)
+        {
+            band (b, "tone_low", -amount * 0.06f);
+            return band (b, "tone_high", amount * 0.08f);
+        }
+
         /** OTT-style up/down settings for a band. */
         P& dynamics (int b, float upT, float upR, float downT, float downR, float att, float rel)
         {
@@ -62,12 +69,12 @@ void registerFactoryPresets (st::PresetManager& pm)
          P().bands (1).sat (0, "Console Bus", 7.0f, 18.0f).dynamics (0, -40.0f, 1.6f, -14.0f, 2.0f, 20.0f, 180.0f));
 
     add ("Tape Bus", "Mix Bus",
-         P().bands (1).sat (0, "Soft Tape", 9.0f).band (0, "tone", -8.0f));
+         P().bands (1).sat (0, "Soft Tape", 9.0f).tilt (0, -8.0f));
 
     add ("Analog Sheen", "Mix Bus",
          P().bands (2, { 3500.0f })
             .sat (0, "Iron Transformer", 5.0f)
-            .sat (1, "Clean Triode", 9.0f).band (1, "tone", 18.0f).band (1, "mix", 60.0f));
+            .sat (1, "Clean Triode", 9.0f).tilt (1, 18.0f).band (1, "mix", 60.0f));
 
     // ------------------------------------------------------------------ Drums
     add ("Drum Smash", "Drums",
@@ -102,10 +109,10 @@ void registerFactoryPresets (st::PresetManager& pm)
          P().bands (3, { 250.0f, 4500.0f })
             .sat (0, "Soft Tape", 2.0f)
             .sat (1, "Warm Valve", 8.0f, 30.0f).dynamics (1, -42.0f, 2.0f, -18.0f, 3.0f, 10.0f, 140.0f)
-            .sat (2, "Gentle Glow", 7.0f).band (2, "tone", 20.0f));
+            .sat (2, "Gentle Glow", 7.0f).tilt (2, 20.0f));
 
     add ("Radio Voice", "Vocals",
-         P().bands (1).sat (0, "Glass Radio", 18.0f).band (0, "tone", 25.0f));
+         P().bands (1).sat (0, "Glass Radio", 18.0f).tilt (0, 25.0f));
 
     // -------------------------------------------------------------- Dynamics
     add ("Up & Down Multiband", "Dynamics",
@@ -133,7 +140,7 @@ void registerFactoryPresets (st::PresetManager& pm)
             .sat (1, "Soft Tape", 12.0f).band (1, "chan", 2.0f).band (1, "level", 2.0f));
 
     add ("Worn Cassette", "Creative",
-         P().bands (1).sat (0, "Worn Cassette", 14.0f).band (0, "tone", -40.0f));
+         P().bands (1).sat (0, "Worn Cassette", 14.0f).tilt (0, -40.0f));
 
     add ("Lead Amp Highs", "Creative",
          P().bands (2, { 900.0f })

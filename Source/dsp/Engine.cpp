@@ -14,9 +14,9 @@ void BandProcessor::prepare (double rate, int maxBlock, int channels, int factor
 
     saturator.prepare (fs, maxBlock, numCh);
     saturator.setLatencyAlignedOversampling (factor);
-    tone.prepare (fs, numCh);
-    tone.setPivot (900.0);
-    tone.setMaxGainDb (9.0f);
+    for (auto& f : toneEq) f.prepare (numCh);
+    toneApplied.fill (99.0f);
+    updateTone();
     feedbackFilter.prepare (fs, numCh);
     feedbackFilter.setParameters (st::dsp::SvfMode::bandPass, settings.feedbackHz, 2.2);
     dynamics.prepare (fs, maxBlock, numCh);
@@ -44,7 +44,7 @@ void BandProcessor::setOversamplingFactor (int factor)
 void BandProcessor::reset()
 {
     saturator.reset();
-    tone.reset();
+    for (auto& f : toneEq) f.reset();
     feedbackFilter.reset();
     dynamics.reset();
     feedbackState.fill (0.0f);
@@ -58,7 +58,7 @@ void BandProcessor::setSettings (const BandSettings& s) noexcept
     saturator.setStyle (s.style);
     saturator.setDrive (s.driveDb);
     saturator.setAutoGain (s.autoGain);
-    tone.setTilt (s.tone);
+    updateTone();
     feedbackFilter.setParameters (st::dsp::SvfMode::bandPass, juce::jlimit (20.0, fs * 0.45, (double) s.feedbackHz), 2.2);
 
     // Feedback: perceptually scaled, stays below self-oscillation runaway (the saturator bounds it anyway).
@@ -95,6 +95,21 @@ void BandProcessor::setSettings (const BandSettings& s) noexcept
     }
 }
 
+void BandProcessor::updateTone()
+{
+    toneActive = false;
+    for (int k = 0; k < 4; ++k)
+    {
+        const float db = settings.toneDb[(size_t) k];
+        toneActive |= std::abs (db) > 0.01f;
+        if (std::abs (db - toneApplied[(size_t) k]) < 0.005f) continue;
+        toneApplied[(size_t) k] = db;
+        const auto type = k == 0 ? st::dsp::BiquadType::lowShelf : (k == 3 ? st::dsp::BiquadType::highShelf : st::dsp::BiquadType::peak);
+        const double f = juce::jmin ((double) defaults::toneFreq[k], fs * 0.4);
+        toneEq[(size_t) k].setParameters (type, fs, f, defaults::toneQ[k], db);
+    }
+}
+
 void BandProcessor::processActiveChannels (juce::AudioBuffer<float>& band, int n, int firstCh, int numActive) noexcept
 {
     float* ch[2] = { band.getWritePointer (firstCh), numActive > 1 ? band.getWritePointer (firstCh + 1) : nullptr };
@@ -125,7 +140,10 @@ void BandProcessor::processActiveChannels (juce::AudioBuffer<float>& band, int n
     }
 
     // Tone tilt after the saturator (outside the feedback loop).
-    tone.process (view, n);
+    if (toneActive)
+        for (int c = 0; c < numActive; ++c)
+            for (auto& f : toneEq)
+                f.process (ch[c], n, c);
 
     if (dynActive && settings.dynPosition == DynamicsPosition::post)
         dynamics.process (view, n);

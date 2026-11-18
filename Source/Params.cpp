@@ -73,7 +73,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout (const
         group->addChild (makeFloat (id ("dyn_attack"), n + "Attack", skewed (0.1f, 300.0f, 15.0f, 0.01f), 8.0f, msAttributes()));
         group->addChild (makeFloat (id ("dyn_release"), n + "Release", skewed (5.0f, 3000.0f, 200.0f, 0.1f), 120.0f, msAttributes()));
         group->addChild (makeChoice (id ("dyn_pos"), n + "Dynamics Position", { "Pre", "Post" }, 1));
-        group->addChild (makeFloat (id ("tone"), n + "Tone", linear (-100.0f, 100.0f, 0.01f), 0.0f, percentAttributes (true)));
+        group->addChild (makeFloat (id ("tone_low"),  n + "Tone Low",      linear (-12.0f, 12.0f, 0.01f), 0.0f, dbAttributes()));
+        group->addChild (makeFloat (id ("tone_lmid"), n + "Tone Low-Mid",  linear (-12.0f, 12.0f, 0.01f), 0.0f, dbAttributes()));
+        group->addChild (makeFloat (id ("tone_hmid"), n + "Tone High-Mid", linear (-12.0f, 12.0f, 0.01f), 0.0f, dbAttributes()));
+        group->addChild (makeFloat (id ("tone_high"), n + "Tone High",     linear (-12.0f, 12.0f, 0.01f), 0.0f, dbAttributes()));
         group->addChild (makeFloat (id ("fb"), n + "Feedback", linear (0.0f, 100.0f, 0.01f), 0.0f, percentAttributes()));
         group->addChild (makeFloat (id ("fb_freq"), n + "Feedback Frequency", logarithmic (20.0f, 20000.0f), 1000.0f, hzAttributes()));
         group->addChild (makeFloat (id ("mix"), n + "Mix", linear (0.0f, 100.0f, 0.01f), 100.0f, percentAttributes()));
@@ -101,7 +104,7 @@ juce::StringArray getModulatableParameterIds()
 
     for (int b = 0; b < kMaxBands; ++b)
         for (auto s : { "drive", "dyn", "dyn_up_thresh", "dyn_up_ratio", "dyn_down_thresh", "dyn_down_ratio",
-                        "dyn_attack", "dyn_release", "tone", "fb", "fb_freq", "mix", "level", "pan" })
+                        "dyn_attack", "dyn_release", "tone_low", "tone_lmid", "tone_hmid", "tone_high", "fb", "fb_freq", "mix", "level", "pan" })
             out.add (ids::band (b, s));
 
     return out;

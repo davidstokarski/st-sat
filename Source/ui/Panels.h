@@ -4,21 +4,39 @@
 namespace stsat
 {
 
-/** Translucent panel that floats over the display and follows the selected band.
-    The dynamics section slides out of its right-hand side. */
-class FloatingBandPanel : public juce::Component, private juce::Timer
+/** Tiny "L ── R" balance control drawn under the Level knob. */
+class PanStrip : public st::ParameterControl
+{
+public:
+    PanStrip (juce::RangedAudioParameter&, juce::UndoManager*);
+    void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override { resetToDefault(); }
+
+private:
+    bool dragging = false;
+    float lastX = 0.0f;
+};
+
+//==============================================================================
+/** The band control bar that floats over the display (Saturn-style): a short translucent bar
+    with grey buttons sitting on its top edge and knobs hanging from it. */
+class FloatingBandPanel : public juce::Component
 {
 public:
     FloatingBandPanel (StSatProcessor&, int band);
-    ~FloatingBandPanel() override { stopTimer(); }
 
     int getBand() const noexcept { return band; }
+    static constexpr int width = 660, height = 136;
 
-    static constexpr int collapsedWidth = 652, expandedWidth = 984, height = 200;
-
-    bool isExpanded() const noexcept { return expanded; }
-    void setExpanded (bool);
-    std::function<void (bool)> onExpandedChanged;
+    /** Called when the user clicks the Dynamics caption (to open the detail popover). */
+    std::function<void()> onDynamicsDetail;
+    std::function<void()> onRemoveBand;
+    juce::Point<int> getDynamicsAnchor() const;   // local, top-centre of the dynamics knob
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -26,27 +44,45 @@ public:
 private:
     StSatProcessor& proc;
     const int band;
-    const juce::Colour colour;
-    bool expanded = false;
 
-    std::unique_ptr<st::Dropdown> style;
-    std::unique_ptr<st::Segmented> channels, position;
-    std::unique_ptr<st::ToggleChip> solo, mute, bypass;
-    std::unique_ptr<st::Knob> drive, dynamics, tone, feedback, fbFreq, mix, level, pan;
-    std::unique_ptr<st::Knob> upT, upR, downT, downR, attack, release;
-    st::IconButton expandButton { st::icons::Icon::chevronRight, "Show dynamics detail" };
+    std::unique_ptr<st::ToggleChip> bypass, solo, mute;
+    std::unique_ptr<st::Dropdown> channels, style;
+    st::IconButton closeButton { st::icons::Icon::close, "Remove band" };
+    std::unique_ptr<st::Knob> mix, feedback, fbFreq, dynamics, drive, level;
+    std::array<std::unique_ptr<st::Fader>, 4> tone;
+    std::unique_ptr<PanStrip> pan;
+    st::FlatButton dynDetail { "", "Upward / downward dynamics detail" };
 
-    juce::Rectangle<float> graph;
-    std::vector<float> separators;   // x positions of soft dividers
-    float liveIn = -100.0f, liveGain = 0.0f;
-
-    void timerCallback() override;
-    st::dsp::UpDownCompressor::Params currentParams() const;
-    void paintDynamicsGraph (juce::Graphics&);
+    juce::Rectangle<float> box;
+    juce::Rectangle<int> toneArea;
 };
 
 //==============================================================================
-/** Bottom strip: quality, slope, auto gain, analyser and the master controls. */
+/** Upward / downward dynamics editor shown as a popover above the band panel. */
+class DynamicsPopover : public juce::Component, private juce::Timer
+{
+public:
+    DynamicsPopover (StSatProcessor&, int band);
+    ~DynamicsPopover() override { stopTimer(); }
+    static constexpr int width = 430, height = 182;
+    int getBand() const noexcept { return band; }
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    StSatProcessor& proc;
+    const int band;
+    std::unique_ptr<st::Segmented> position;
+    std::unique_ptr<st::Knob> upT, upR, downT, downR, attack, release;
+    juce::Rectangle<float> graph;
+    float liveIn = -100.0f, liveGain = 0.0f;
+
+    void timerCallback() override;
+};
+
+//==============================================================================
+/** Bottom bar: text-only settings on the left, master values on the right. */
 class FooterBar : public juce::Component
 {
 public:
@@ -58,11 +94,12 @@ public:
     void resized() override;
 
 private:
-    st::Segmented quality, slope;
+    st::Dropdown quality, slope;
     st::ToggleChip autoGain;
-    st::PillButton analyzerOff { "OFF" }, analyzerPost { "POST" }, analyzerBoth { "PRE+POST" };
+    st::FlatButton analyzer { "", "Spectrum analyser" };
     st::NumberBox input, mix, output, pan;
-    juce::Rectangle<int> qualityCaption, slopeCaption, analyzerCaption;
+    int analyzerMode = 1;
+    std::vector<float> dividers;
 };
 
 } // namespace stsat

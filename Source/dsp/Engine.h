@@ -15,7 +15,7 @@ struct BandSettings
     float downThresholdDb = -18.0f, downRatio = 4.0f;
     float attackMs = 8.0f, releaseMs = 120.0f;
     DynamicsPosition dynPosition = DynamicsPosition::post;
-    float tone = 0.0f;              // -1..+1
+    std::array<float, 4> toneDb {};  // low shelf, low-mid, high-mid, high shelf
     float feedback = 0.0f;          // 0..1
     float feedbackHz = 1000.0f;
     float mix = 1.0f;               // 0..1
@@ -52,7 +52,10 @@ private:
     double fs = 96000.0;
 
     Saturator saturator;
-    st::dsp::TiltFilter tone;
+    std::array<st::dsp::Biquad, 4> toneEq;
+    std::array<float, 4> toneApplied { 99.0f, 99.0f, 99.0f, 99.0f };
+    bool toneActive = false;
+    void updateTone();
     st::dsp::Svf feedbackFilter;
     st::dsp::UpDownCompressor dynamics;
     juce::AudioBuffer<float> dry;
