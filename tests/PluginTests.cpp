@@ -1,6 +1,7 @@
 // Whole-plugin smoke / stress tests and editor snapshots.
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "ui/Strip.h"
 
 namespace
 {
@@ -174,6 +175,52 @@ static int runTests()
         const auto ms = juce::Time::getMillisecondCounterHiRes() - t0;
         const double audioMs = blocks * 512 / 48.0;
         std::cout << "CPU (6 bands, 4x, dynamics on): " << juce::String (100.0 * ms / audioMs, 1) << "% of one core\n";
+    }
+
+    // ---- Multiview: ST Sat's own module, editable; a second instance on the same track joins the row
+    {
+        juce::AudioProcessor::TrackProperties tp;
+        tp.name = juce::String ("Drums");
+        p.updateTrackProperties (tp);
+        auto second = std::make_unique<StSatProcessor>();
+        second->updateTrackProperties (tp);
+        st::InstanceRegistry::get().flush();
+        std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+        ed->setSize (StSatEditor::designWidth, StSatEditor::designHeight);
+        auto* e = dynamic_cast<StSatEditor*> (ed.get());
+        e->openMultiView();
+        auto* mv = e->getMultiView();
+        mv->refresh();
+        const int n = st::InstanceRegistry::get().getNumInstances();   // other instances may be alive in this test
+        check (mv != nullptr && mv->getNumModules() == n && mv->getNumRows() == n - 1,
+               "multiview: both Drums instances share one row (" + juce::String (mv->getNumRows()) + " rows, " + juce::String (mv->getNumModules()) + " modules)");
+        auto* strip = dynamic_cast<stsat::SatStrip*> (mv->getModuleComponent (second->getInstanceUid()));
+        check (strip != nullptr && strip->getNumKnobs() == second->getNumBands() + 2, "ST Sat module: a drive per band + mix + out");
+        if (strip != nullptr)
+        {
+            auto* k = strip->getKnob (0);
+            const float before = second->bandParam (0, "drive").getValue();
+            auto src = juce::Desktop::getInstance().getMainMouseSource();
+            const auto c = k->getLocalBounds().getCentre().toFloat();
+            auto ev = [&] (juce::Point<float> pos, juce::ModifierKeys m, bool dragged)
+            {
+                const auto now = juce::Time::getCurrentTime();
+                return juce::MouseEvent (src, pos, m, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, k, k, now, c, now, 1, dragged);
+            };
+            const juce::ModifierKeys lb (juce::ModifierKeys::leftButtonModifier);
+            k->mouseDown (ev (c, lb, false));
+            for (int i = 1; i <= 10; ++i) k->mouseDrag (ev (c.translated (0.0f, -6.0f * (float) i), lb, true));
+            k->mouseUp (ev (c.translated (0.0f, -60.0f), {}, true));
+            check (second->bandParam (0, "drive").getValue() > before + 0.1f && std::abs (p.bandParam (0, "drive").getValue() - before) < 0.5f,
+                   "editing the module edits that instance");
+        }
+        juce::Image img (juce::Image::ARGB, mv->getWidth(), mv->getHeight(), true);
+        { juce::Graphics g (img); mv->paintEntireComponent (g, true); }
+        second.reset();
+        check (mv->getNumModules() == n - 1, "removed instance leaves the multiview");
+        { juce::Graphics g (img); mv->paintEntireComponent (g, true); }
+        ed.reset();
+        p.updateTrackProperties ({});
     }
 
     std::cout << (failures == 0 ? "ALL PASSED" : juce::String (failures) + " FAILURES") << "\n";

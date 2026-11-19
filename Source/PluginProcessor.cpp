@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "ui/Strip.h"
 #include "FactoryPresets.h"
 
 using namespace stsat;
@@ -75,6 +76,7 @@ StSatProcessor::StSatProcessor()
 
 StSatProcessor::~StSatProcessor()
 {
+    unregisterInstance();   // first: views of this instance (elsewhere) still use its members
     apvts.removeParameterListener (ids::quality, this);
     cancelPendingUpdate();
 }
@@ -376,6 +378,16 @@ void StSatProcessor::removeBand (int k)
 }
 
 void StSatProcessor::stateRestored() {}
+
+std::unique_ptr<juce::Component> StSatProcessor::createStripView()
+{
+    return std::make_unique<stsat::SatStrip> (*this);
+}
+
+int StSatProcessor::getStripWidth (int height) const
+{
+    return stsat::SatStrip::widthFor (height, juce::jlimit (1, stsat::kMaxBands, numBands.getInt()));
+}
 
 juce::AudioProcessorEditor* StSatProcessor::createEditor()
 {

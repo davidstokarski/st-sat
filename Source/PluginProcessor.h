@@ -17,6 +17,9 @@ public:
 
     bool hasEditor() const override { return true; }
     juce::AudioProcessorEditor* createEditor() override;
+    /** ST Sat's module in the multiview (st::MultiView). */
+    std::unique_ptr<juce::Component> createStripView() override;
+    int getStripWidth (int height) const override;
     double getTailLengthSeconds() const override { return 0.05; }
 
     //==============================================================================

@@ -24,6 +24,7 @@ private:
     std::unique_ptr<st::ModulationBinder> modBinder;
     std::unique_ptr<st::ModulationTrails> modTrails;
     stsat::FooterBar footer;
+    std::unique_ptr<st::MultiView> multiView;
 
     st::Animated panelX, panelFade, outgoingFade, popoverFade;
     int selectedBand = 0;
@@ -33,6 +34,14 @@ private:
     void selectBand (int b, bool animate = true, bool force = false);
     void togglePopover (PopoverKind);
     void closePopover();
+    void toggleMultiView();
+
+public:
+    /** Opens the multiview (every ST plug-in in the session; covers the whole plugin window). */
+    void openMultiView() { if (multiView == nullptr) toggleMultiView(); }
+    st::MultiView* getMultiView() noexcept { return multiView.get(); }
+
+private:
     void animate (double dt);
     float targetPanelX() const;
 

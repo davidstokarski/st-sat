@@ -23,6 +23,8 @@ The zip contains `ST Sat.vst3` and `ST Sat.component`:
 (The repository is private, so the link works when you're signed in to GitHub with access.)
 
 ## Features
+- **Multiview** (header, left of the gear): every ST plug-in in the session by track — ST EQ and ST Sat side by side
+  on each track's row, all editable from here (ST Sat's module: a drive per band, mix and output, over its spectrum)
 - Up to 6 bands with phase-coherent Linkwitz–Riley crossovers (12/24/48 dB/oct); drag crossovers and band levels
   right on the spectrum, double-click to add a band
 - 27 saturation styles across Tube, Tape, Saturation, Amp, Clip and FX, with loudness-calibrated auto gain

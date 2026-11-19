@@ -18,3 +18,6 @@ Plugin-specific notes:
 - Verify: `StSatPluginTests` (stress), `StSatPluginTests --snapshot <dir>` (look at the PNGs), `auval -v aufx Stst StAu`.
 - Release: `scripts/release.sh` (universal build → GitHub release zip with the .vst3 and .component).
 - Anything reusable belongs in st-shell, not here.
+- Multiview: `Source/ui/Strip.*` (`SatStrip`, ST Sat's module in the shell's `st::MultiView`, returned by
+  `StSatProcessor::createStripView`). Other ST plug-ins (ST EQ) render it off screen and forward the mouse, so it
+  uses knobs only. The editor opens the multiview from the header button.

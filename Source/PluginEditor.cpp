@@ -9,6 +9,7 @@ StSatEditor::StSatEditor (StSatProcessor& p)
       footer (p)
 {
     header.setProductName ("Sat");
+    header.setMultiViewCallback ([this] { toggleMultiView(); });
 
     auto& content = getContent();
     content.addAndMakeVisible (display);
@@ -184,10 +185,27 @@ void StSatEditor::animate (double dt)
     }
 }
 
+void StSatEditor::toggleMultiView()
+{
+    if (multiView != nullptr) { multiView.reset(); return; }
+    closePopover();
+    st::MultiView::Options o;
+    o.leftmostKind = "ST EQ";   // EQ first on every track, then ST Sat and the others
+    multiView = std::make_unique<st::MultiView> (proc, o);
+    multiView->onClose = [this]
+    {
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<StSatEditor> (this)] { if (safe != nullptr && safe->multiView != nullptr) safe->toggleMultiView(); });
+    };
+    getContent().addAndMakeVisible (*multiView);
+    multiView->setBounds (getContent().getLocalBounds());
+    multiView->toFront (true);
+}
+
 void StSatEditor::layout (juce::Rectangle<int>)
 {
     auto all = getContent().getLocalBounds();
     display.setBounds (all.withHeight (displayHeight));
+    if (multiView != nullptr) multiView->setBounds (all);
     footer.setBounds (all.removeFromBottom (footerHeight));
     if (modStrip != nullptr)
         modStrip->setBounds (0, modStripY, designWidth, st::ModulationStrip::preferredHeight);
