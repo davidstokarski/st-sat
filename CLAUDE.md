@@ -16,6 +16,8 @@ Plugin-specific notes:
   (`StSatDspTests --calibrate --write`).
 - UI: `Source/ui/MultibandDisplay.*` (display), `Source/ui/Panels.*` (band bar, popovers, footer), `Source/PluginEditor.*`.
 - Verify: `StSatPluginTests` (stress), `StSatPluginTests --snapshot <dir>` (look at the PNGs), `auval -v aufx Stst StAu`.
+  Website videos: `StSatPluginTests --video <dir> [scene ...]` (`tests/VideoRender.cpp`, on the shell's
+  `st_shell/testing/st_video.h`): scenes drum-bus, vocal-space.
 - Release: `scripts/release.sh` (universal build → GitHub release zip with the .vst3 and .component).
 - Anything reusable belongs in st-shell, not here.
 - Multiview: `Source/ui/Strip.*` (`SatStrip`, ST Sat's module in the shell's `st::MultiView`, returned by

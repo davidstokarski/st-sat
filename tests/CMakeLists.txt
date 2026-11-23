@@ -30,10 +30,10 @@ target_link_libraries(StSatDspTests
 
 # ---------------------------------------------------------------------------
 # Whole-plugin tests: processor smoke/stress tests + editor snapshots (PNG).
-#   StSatPluginTests [--snapshot <dir>]
+#   StSatPluginTests [--snapshot <dir>] [--video <dir> [scene ...]]
 # Links the plugin's shared-code library, so it exercises the real processor.
 juce_add_console_app(StSatPluginTests PRODUCT_NAME "StSatPluginTests")
-target_sources(StSatPluginTests PRIVATE PluginTests.cpp)
+target_sources(StSatPluginTests PRIVATE PluginTests.cpp VideoRender.cpp)
 target_compile_features(StSatPluginTests PRIVATE cxx_std_20)
 target_link_libraries(StSatPluginTests PRIVATE STSat)
 target_include_directories(StSatPluginTests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../Source")
