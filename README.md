@@ -75,3 +75,7 @@ version in `CMakeLists.txt` (bump `project(... VERSION x.y.z)` first for a new r
 - Drag the red ring of Drive to spread drive between L/R; drag Level's ring to pan.
 - `•••` next to Dynamics or Space opens their detail panels.
 - Alt-click or double-click resets a knob; cmd-click types a value; shift-drag for fine control.
+
+## Contributing
+
+See the shared [contributor notes](https://github.com/davidstokarski/st-shell/blob/main/CONTRIBUTING.md) in ST Shell. All PRs to `main` need approval from @davidstokarski.
