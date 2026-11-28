@@ -9,7 +9,7 @@ namespace
     {
         st::SpectrumAnalyzer::Options o;
         o.fftOrder = 12;            // 4096: shorter window = quicker, livelier response
-        o.hopSize = 128;            // a fresh FFT nearly every display frame
+        o.hopSize = 0;              // a fresh FFT every display frame (in step with the monitor)
         o.numDisplayPoints = 340;
         o.minHz = 15.0f;
         o.maxHz = 24000.0f;
